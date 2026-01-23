@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 3000;
 
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
+const missionRoutes = require('./routes/missions');
 
 app.use(cors());
 app.use(express.json());
@@ -20,10 +21,11 @@ app.use(express.json());
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/missions', missionRoutes);
 
 // Basic Route
 app.get('/', (req, res) => {
-    res.json({ message: 'Welcome to the Civic API' });
+    res.json({ message: 'Welcome to the Eco-Pulse API' });
 });
 
 app.listen(PORT, () => {
