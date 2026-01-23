@@ -11,35 +11,19 @@ const prisma = new PrismaClient({
 });
 const PORT = process.env.PORT || 3000;
 
+const authRoutes = require('./routes/auth');
+const userRoutes = require('./routes/users');
+
 app.use(cors());
 app.use(express.json());
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 
 // Basic Route
 app.get('/', (req, res) => {
     res.json({ message: 'Welcome to the Civic API' });
-});
-
-// Sample API: Get Users
-app.get('/api/users', async (req, res) => {
-    try {
-        const users = await prisma.user.findMany();
-        res.json(users);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch users' });
-    }
-});
-
-// Sample API: Create User
-app.post('/api/users', async (req, res) => {
-    const { email, name } = req.body;
-    try {
-        const newUser = await prisma.user.create({
-            data: { email, name },
-        });
-        res.status(201).json(newUser);
-    } catch (error) {
-        res.status(400).json({ error: 'User already exists or invalid data' });
-    }
 });
 
 app.listen(PORT, () => {
