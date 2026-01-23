@@ -17,7 +17,7 @@ const createMission = async (req, res) => {
             data: {
                 title,
                 description,
-                locationGps,
+                locationGps: locationGps || '0,0',
                 locationName,
                 startTime: new Date(startTime),
                 endTime: new Date(endTime),
@@ -27,7 +27,7 @@ const createMission = async (req, res) => {
                 isEmergency: isEmergency || false,
                 createdBy: creatorId,
                 missionCategories: {
-                    create: categoryIds.map(id => ({ categoryId: id }))
+                    create: (categoryIds || []).map(id => ({ categoryId: id }))
                 }
             },
             include: {
