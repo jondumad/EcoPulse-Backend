@@ -1,18 +1,93 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique // "SuperAdmin", "Coordinator", "Volunteer"
+  users     User[]
 }
 
 model User {
+  id            Int      @id @default(autoincrement())
+  email         String   @unique
+  passwordHash  String
+  name          String
+  roleId        Int
+  totalPoints   Int      @default(0)
+  createdAt     DateTime @default(now())
+  
+  role          Role     @relation(fields: [roleId], references: [id])
+  attendance    Attendance[]
+  registrations Registration[]
+  userBadges    UserBadge[]
+}
+
+model Mission {
+  id              Int      @id @default(autoincrement())
+  title           String
+  description     String
+  locationGps     String   // Store as "lat,lng"
+  startTime       DateTime
+  endTime         DateTime
+  pointsValue     Int
+  maxVolunteers   Int?
+  createdBy       Int
+  
+  attendance      Attendance[]
+  registrations   Registration[]
+}
+
+model Attendance {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  missionId    Int
+  checkInTime  DateTime @default(now())
+  checkOutTime DateTime?
+  status       String   @default("Pending") // "Pending", "Verified", "Rejected"
+  gpsProof     String?
+  totalHours   Float?
+  
+  user         User     @relation(fields: [userId], references: [id])
+  mission      Mission  @relation(fields: [missionId], references: [id])
+}
+
+model Registration {
   id        Int      @id @default(autoincrement())
-  email     String   @unique
-  name      String?
+  userId    Int
+  missionId Int
+  status    String   @default("Registered") // "Registered", "Waitlisted", "Canceled"
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  
+  user      User     @relation(fields: [userId], references: [id])
+  mission   Mission  @relation(fields: [missionId], references: [id])
+  
+  @@unique([userId, missionId])
+}
+
+model Badge {
+  id              Int      @id @default(autoincrement())
+  name            String   @unique
+  description     String
+  iconUrl         String?
+  pointsRequired  Int
+  
+  userBadges      UserBadge[]
+}
+
+model UserBadge {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  badgeId     Int
+  dateEarned  DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id])
+  badge       Badge    @relation(fields: [badgeId], references: [id])
+  
+  @@unique([userId, badgeId])
 }
