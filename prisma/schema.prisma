@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model Role {
@@ -14,70 +13,102 @@ model Role {
 }
 
 model User {
-  id            Int      @id @default(autoincrement())
-  email         String   @unique
-  passwordHash  String
-  name          String
-  roleId        Int
-  totalPoints   Int      @default(0)
-  createdAt     DateTime @default(now())
+  id                Int                @id @default(autoincrement())
+  email             String             @unique
+  passwordHash      String
+  name              String
+  roleId            Int
+  totalPoints       Int                @default(0)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
   
-  role          Role     @relation(fields: [roleId], references: [id])
-  attendance    Attendance[]
-  registrations Registration[]
-  userBadges    UserBadge[]
+  role              Role               @relation(fields: [roleId], references: [id])
+  attendance        Attendance[]
+  registrations     Registration[]
+  userBadges        UserBadge[]
+  notifications     Notification[]
+  pointTransactions PointTransaction[]
+  createdMissions   Mission[]          @relation("MissionCreator")
 }
 
 model Mission {
-  id              Int      @id @default(autoincrement())
-  title           String
-  description     String
-  locationGps     String   // Store as "lat,lng"
-  startTime       DateTime
-  endTime         DateTime
-  pointsValue     Int
-  maxVolunteers   Int?
-  createdBy       Int
+  id                Int                 @id @default(autoincrement())
+  title             String
+  description       String
+  locationGps       String              // Store as "lat,lng"
+  locationName      String?             // e.g., "Central Park, Manhattan"
+  startTime         DateTime
+  endTime           DateTime
+  pointsValue       Int
+  maxVolunteers     Int?
+  currentVolunteers Int                 @default(0)
+  createdBy         Int
+  priority          String              @default("Normal") // "Normal", "Urgent", "Emergency"
+  isEmergency       Boolean             @default(false)
+  status            String              @default("Open") // "Open", "InProgress", "Completed", "Cancelled"
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
   
-  attendance      Attendance[]
-  registrations   Registration[]
+  creator           User                @relation("MissionCreator", fields: [createdBy], references: [id])
+  attendance        Attendance[]
+  registrations     Registration[]
+  impactMetrics     ImpactMetric[]
+  missionCategories MissionCategory[]
+  recurringMission  RecurringMission?
+  
+  @@index([startTime])
+  @@index([priority])
+  @@index([status])
 }
 
 model Attendance {
-  id           Int      @id @default(autoincrement())
+  id           Int       @id @default(autoincrement())
   userId       Int
   missionId    Int
-  checkInTime  DateTime @default(now())
+  checkInTime  DateTime  @default(now())
   checkOutTime DateTime?
-  status       String   @default("Pending") // "Pending", "Verified", "Rejected"
-  gpsProof     String?
+  status       String    @default("Pending") // "Pending", "Verified", "Rejected"
+  gpsProof     String?   // Actual GPS coordinates at check-in
   totalHours   Float?
+  verifiedBy   Int?      // Coordinator who verified
+  verifiedAt   DateTime?
+  createdAt    DateTime  @default(now())
   
-  user         User     @relation(fields: [userId], references: [id])
-  mission      Mission  @relation(fields: [missionId], references: [id])
+  user         User      @relation(fields: [userId], references: [id])
+  mission      Mission   @relation(fields: [missionId], references: [id])
+  
+  @@unique([userId, missionId]) // One attendance record per user per mission
+  @@index([status])
 }
 
 model Registration {
   id        Int      @id @default(autoincrement())
   userId    Int
   missionId Int
-  status    String   @default("Registered") // "Registered", "Waitlisted", "Canceled"
+  status    String   @default("Registered") // "Registered", "Waitlisted", "Cancelled"
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   
   user      User     @relation(fields: [userId], references: [id])
   mission   Mission  @relation(fields: [missionId], references: [id])
   
   @@unique([userId, missionId])
+  @@index([status])
 }
 
 model Badge {
-  id              Int      @id @default(autoincrement())
-  name            String   @unique
+  id              Int         @id @default(autoincrement())
+  name            String      @unique
   description     String
   iconUrl         String?
   pointsRequired  Int
+  category        String?     // "Participation", "Impact", "Streak", "Special"
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
   
   userBadges      UserBadge[]
+  
+  @@index([pointsRequired])
 }
 
 model UserBadge {
@@ -90,4 +121,89 @@ model UserBadge {
   badge       Badge    @relation(fields: [badgeId], references: [id])
   
   @@unique([userId, badgeId])
+  @@index([dateEarned])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  title     String
+  message   String
+  type      String   // "mission_reminder", "verification_needed", "badge_earned", "emergency_mission", "points_awarded"
+  isRead    Boolean  @default(false)
+  relatedId Int?     // Can reference missionId, badgeId, etc.
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+model PointTransaction {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  missionId   Int?     // Null if manual adjustment
+  amount      Int      // Positive or negative
+  reason      String   // "mission_completed", "badge_earned", "manual_adjustment", "penalty"
+  description String?  // Additional context
+  createdBy   Int?     // Admin who made manual adjustment
+  createdAt   DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Category {
+  id          Int                @id @default(autoincrement())
+  name        String             @unique // "Environmental", "Social", "Educational", "Health"
+  description String?
+  icon        String?            // Icon identifier or emoji
+  color       String?            // Hex color for UI
+  isActive    Boolean            @default(true)
+  createdAt   DateTime           @default(now())
+  
+  missionCategories MissionCategory[]
+}
+
+model MissionCategory {
+  missionId   Int
+  categoryId  Int
+  
+  mission     Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  category    Category @relation(fields: [categoryId], references: [id])
+  
+  @@id([missionId, categoryId])
+}
+
+model ImpactMetric {
+  id          Int      @id @default(autoincrement())
+  missionId   Int
+  metricType  String   // "bags_collected", "trees_planted", "meals_delivered", "hours_taught", "distance_cleaned_km"
+  targetValue Float?   // Goal for the mission
+  actualValue Float?   // Actual achievement
+  unit        String   // "bags", "trees", "people", "hours", "km"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  mission     Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  
+  @@index([missionId])
+}
+
+model RecurringMission {
+  id            Int      @id @default(autoincrement())
+  missionId     Int      @unique // Links to the "template" mission
+  frequency     String   // "daily", "weekly", "biweekly", "monthly"
+  dayOfWeek     Int?     // 0-6 (Sunday-Saturday) for weekly
+  dayOfMonth    Int?     // 1-31 for monthly
+  timeOfDay     String?  // "14:00" format
+  endDate       DateTime? // When to stop generating
+  isActive      Boolean  @default(true)
+  lastGenerated DateTime? // Last time an instance was created
+  createdAt     DateTime @default(now())
+  
+  mission       Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
 }
