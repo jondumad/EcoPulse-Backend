@@ -13,6 +13,9 @@ const createMission = async (req, res) => {
     const creatorId = req.user.id;
 
     try {
+        const userRole = req.user.role?.name;
+        const initialStatus = userRole === 'SuperAdmin' ? 'Open' : 'Pending';
+
         const mission = await prisma.mission.create({
             data: {
                 title,
@@ -23,8 +26,9 @@ const createMission = async (req, res) => {
                 endTime: new Date(endTime),
                 pointsValue: parseInt(pointsValue),
                 maxVolunteers: maxVolunteers ? parseInt(maxVolunteers) : null,
-                priority: priority || 'Normal',
+                priority: priority || (isEmergency ? 'Emergency' : 'Normal'),
                 isEmergency: isEmergency || false,
+                status: initialStatus,
                 createdBy: creatorId,
                 missionCategories: {
                     create: (categoryIds || []).map(id => ({ categoryId: id }))
@@ -36,10 +40,49 @@ const createMission = async (req, res) => {
                 }
             }
         });
+
+        // Trigger notification if Emergency
+        if (mission.isEmergency) {
+            await triggerEmergencyNotification(mission);
+        }
+
         res.status(201).json(mission);
     } catch (error) {
         console.error('Create mission error:', error);
         res.status(500).json({ error: 'Failed to create mission' });
+    }
+};
+
+const triggerEmergencyNotification = async (mission) => {
+    try {
+        // Find all users and create notifications for them
+        const users = await prisma.user.findMany({ select: { id: true } });
+        const notifications = users.map(user => ({
+            userId: user.id,
+            title: `EMERGENCY MISSION: ${mission.title}`,
+            message: `New high-priority mission at ${mission.locationName || 'unknown location'}. Join now!`,
+            type: 'emergency_mission',
+            relatedId: mission.id
+        }));
+
+        await prisma.notification.createMany({ data: notifications });
+        console.log(`Dispatched ${notifications.length} emergency notifications.`);
+    } catch (error) {
+        console.error('Emergency notification dispatch error:', error);
+    }
+};
+
+const approveMission = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const mission = await prisma.mission.update({
+            where: { id: parseInt(id) },
+            data: { status: 'Open' }
+        });
+        res.json(mission);
+    } catch (error) {
+        console.error('Approve mission error:', error);
+        res.status(500).json({ error: 'Failed to approve mission' });
     }
 };
 
@@ -90,6 +133,10 @@ const getMissions = async (req, res) => {
                 },
                 _count: {
                     select: { registrations: true }
+                },
+                registrations: {
+                    where: { userId: req.user.id },
+                    select: { status: true }
                 }
             },
             orderBy: { startTime: 'asc' }
@@ -115,9 +162,8 @@ const getMissionById = async (req, res) => {
                     select: { id: true, name: true, email: true }
                 },
                 registrations: {
-                    // Check if current user is registered (if auth'd)
-                    // This simple check might be better done by a separate query or FE check
-                    select: { userId: true, status: true }
+                    where: { userId: req.user.id },
+                    select: { status: true }
                 },
                 _count: {
                     select: { registrations: true }
@@ -155,9 +201,14 @@ const updateMission = async (req, res) => {
         const existing = await prisma.mission.findUnique({ where: { id: parseInt(id) } });
         if (!existing) return res.status(404).json({ error: 'Not found' });
 
-        if (req.user.role.name !== 'SuperAdmin' &&
-            req.user.role.name !== 'Coordinator' &&
-            existing.createdBy !== req.user.id) {
+        const userRole = req.user.role?.name || "";
+        const isAuthorized = userRole === 'SuperAdmin' ||
+            userRole === 'Coordinator' ||
+            req.user.roleId === 1 ||
+            req.user.roleId === 2 ||
+            existing.createdBy === req.user.id;
+
+        if (!isAuthorized) {
             return res.status(403).json({ error: 'Unauthorized to update this mission' });
         }
 
@@ -196,5 +247,6 @@ module.exports = {
     getMissions,
     getMissionById,
     updateMission,
-    deleteMission
+    deleteMission,
+    approveMission
 };

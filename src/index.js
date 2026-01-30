@@ -15,6 +15,7 @@ const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const missionRoutes = require('./routes/missions');
 const attendanceRoutes = require('./routes/attendance');
+const adminRoutes = require('./routes/admin');
 
 app.use(cors());
 app.use(express.json());
@@ -24,6 +25,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/missions', missionRoutes);
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Basic Route
 app.get('/', (req, res) => {

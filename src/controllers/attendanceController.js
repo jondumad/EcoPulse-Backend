@@ -39,8 +39,17 @@ const getQRCode = async (req, res) => {
     // Check if the user is the creator or an admin (if we had admin roles)
     // For now, any Coordinator can probably generate QR if they are associated,
     // but the requirement says "Coordinator only".
-    if (req.user.role !== 'Coordinator' && req.user.role !== 'SuperAdmin') {
-      return res.status(403).json({ error: 'Only coordinators can generate QR codes' });
+    const userRole = req.user.role?.name || "";
+    const isCoordinator = userRole === 'Coordinator' || req.user.roleId === 2;
+    const isSuperAdmin = userRole === 'SuperAdmin' || req.user.roleId === 1;
+
+    console.log(`[QR Check] User: ${req.user.email}, RoleName: "${userRole}", RoleId: ${req.user.roleId}, isCoord: ${isCoordinator}, isSA: ${isSuperAdmin}`);
+
+    if (!isCoordinator && !isSuperAdmin) {
+      return res.status(403).json({ 
+        error: 'Only coordinators can generate QR codes',
+        debug: { userRole, roleId: req.user.roleId }
+      });
     }
 
     const token = generateQRToken(mission.id, coordinatorId);
@@ -104,6 +113,17 @@ const checkIn = async (req, res) => {
         gpsProof: userGps,
         status: 'Pending',
       },
+    });
+
+    // 4. Update Registration Status
+    await prisma.registration.update({
+      where: {
+        userId_missionId: {
+          userId,
+          missionId: parseInt(missionId),
+        },
+      },
+      data: { status: 'CheckedIn' },
     });
 
     res.status(201).json({
@@ -235,7 +255,7 @@ const verifyAttendance = async (req, res) => {
       },
     });
 
-    // If verified, award points
+    // If verified, award points and update registration status
     if (status === 'Verified') {
       const points = attendance.mission.pointsValue;
 
@@ -245,6 +265,15 @@ const verifyAttendance = async (req, res) => {
           data: {
             totalPoints: { increment: points },
           },
+        }),
+        prisma.registration.update({
+          where: {
+            userId_missionId: {
+              userId: attendance.userId,
+              missionId: attendance.missionId
+            }
+          },
+          data: { status: 'Completed' }
         }),
         prisma.pointTransaction.create({
           data: {

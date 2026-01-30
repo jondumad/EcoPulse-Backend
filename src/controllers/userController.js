@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const bcrypt = require('bcrypt');
 
 const getProfile = async (req, res) => {
     // req.user is populated by authenticateToken middleware
@@ -58,6 +59,98 @@ const updateProfile = async (req, res) => {
     }
 };
 
+const getAllUsers = async (req, res) => {
+    const { search, roleId, status } = req.query;
+
+    try {
+        const where = {};
+        if (search) {
+            where.OR = [
+                { name: { contains: search, mode: 'insensitive' } },
+                { email: { contains: search, mode: 'insensitive' } },
+            ];
+        }
+        if (roleId) {
+            where.roleId = parseInt(roleId);
+        }
+        if (status) {
+            where.isActive = status === 'active';
+        }
+
+        const users = await prisma.user.findMany({
+            where,
+            include: { role: true },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        const safeUsers = users.map(user => {
+            const { passwordHash, ...safeUser } = user;
+            return safeUser;
+        });
+
+        res.json(safeUsers);
+    } catch (error) {
+        console.error('Get all users error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+const updateUserRole = async (req, res) => {
+    const { id } = req.params;
+    const { roleId } = req.body;
+
+    try {
+        const updatedUser = await prisma.user.update({
+            where: { id: parseInt(id) },
+            data: { roleId: parseInt(roleId) },
+            include: { role: true }
+        });
+
+        const { passwordHash, ...safeUser } = updatedUser;
+        res.json(safeUser);
+    } catch (error) {
+        console.error('Update user role error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+const updateUserStatus = async (req, res) => {
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    try {
+        const updatedUser = await prisma.user.update({
+            where: { id: parseInt(id) },
+            data: { isActive },
+            include: { role: true }
+        });
+
+        const { passwordHash, ...safeUser } = updatedUser;
+        res.json(safeUser);
+    } catch (error) {
+        console.error('Update user status error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+const resetUserPassword = async (req, res) => {
+    const { id } = req.params;
+    const { newPassword } = req.body; // In a real app, you might generate this
+
+    try {
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await prisma.user.update({
+            where: { id: parseInt(id) },
+            data: { passwordHash: hashedPassword }
+        });
+
+        res.json({ message: 'Password reset successfully' });
+    } catch (error) {
+        console.error('Reset user password error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
 const getLeaderboard = async (req, res) => {
     try {
         const users = await prisma.user.findMany({
@@ -90,4 +183,8 @@ module.exports = {
     getProfile,
     updateProfile,
     getLeaderboard,
+    getAllUsers,
+    updateUserRole,
+    updateUserStatus,
+    resetUserPassword,
 };

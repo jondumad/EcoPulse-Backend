@@ -73,6 +73,10 @@ const login = async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
+        if (!user.isActive) {
+            return res.status(403).json({ error: 'Your account has been suspended. Please contact the administrator.' });
+        }
+
         const validPassword = await bcrypt.compare(password, user.passwordHash);
         if (!validPassword) {
             return res.status(401).json({ error: 'Invalid credentials' });

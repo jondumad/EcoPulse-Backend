@@ -21,6 +21,10 @@ const authenticateToken = async (req, res, next) => {
             return res.status(401).json({ error: 'User not found' });
         }
 
+        if (!user.isActive) {
+            return res.status(403).json({ error: 'Account suspended' });
+        }
+
         req.user = user;
         next();
     } catch (error) {
@@ -29,13 +33,31 @@ const authenticateToken = async (req, res, next) => {
 };
 
 const checkRole = (allowedRoles) => {
+    const roleMap = {
+        'SuperAdmin': 1,
+        'Coordinator': 2,
+        'Volunteer': 3
+    };
+
     return (req, res, next) => {
-        if (!req.user || !req.user.role) {
-            return res.status(403).json({ error: 'Access denied: Role not found' });
+        if (!req.user) {
+            return res.status(403).json({ error: 'Access denied: User not found' });
         }
 
-        if (!allowedRoles.includes(req.user.role.name)) {
-            return res.status(403).json({ error: 'Access denied: Insufficient permissions' });
+        const userRoleName = req.user.role?.name;
+        const userRoleId = req.user.roleId;
+
+        const hasRole = allowedRoles.some(roleName =>
+            userRoleName === roleName || userRoleId === roleMap[roleName]
+        );
+
+        console.log(`[Auth Check] User: ${req.user.email}, Role: ${userRoleName}, RoleId: ${userRoleId}, Allowed: ${allowedRoles}, Result: ${hasRole}`);
+
+        if (!hasRole) {
+            return res.status(403).json({
+                error: 'Access denied: Insufficient permissions',
+                debug: { userRoleName, userRoleId, required: allowedRoles }
+            });
         }
 
         next();
