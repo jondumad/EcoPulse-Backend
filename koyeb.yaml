@@ -1,0 +1,30 @@
+# Koyeb configuration
+# Reference: https://www.koyeb.com/docs/reference/yaml-configuration
+
+name: ecopulse
+
+services:
+  - name: db
+    type: database
+    engine: postgres
+    version: "15"
+    region: fra
+    instance_type: database-micro
+
+  - name: backend
+    type: service
+    instance_type: nano
+    region: fra
+    ports:
+      - port: 3000
+        protocol: http
+    env:
+      - key: DATABASE_URL
+        value: "{{ .services.db.url }}"
+      - key: PORT
+        value: "3000"
+    build:
+      type: docker
+    deploy:
+      type: git
+      repository: github.com/user/ecopulse # User will need to update this or Koyeb will auto-detect
