@@ -27,4 +27,4 @@ services:
       type: docker
     deploy:
       type: git
-      repository: github.com/user/ecopulse # User will need to update this or Koyeb will auto-detect
+      repository: https://github.com/jondumad/EcoPulse-Backend
