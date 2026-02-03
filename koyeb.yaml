@@ -4,13 +4,6 @@
 name: ecopulse
 
 services:
-  - name: db
-    type: database
-    engine: postgres
-    version: "15"
-    region: fra
-    instance_type: database-micro
-
   - name: backend
     type: service
     instance_type: nano
@@ -20,7 +13,7 @@ services:
         protocol: http
     env:
       - key: DATABASE_URL
-        value: "{{ .services.db.url }}"
+        value: "{{ .env.DATABASE_URL }}"
       - key: PORT
         value: "3000"
     build:
