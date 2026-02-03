@@ -17,7 +17,11 @@ const registerForMission = async (req, res) => {
         });
 
         if (!mission) return res.status(404).json({ error: 'Mission not found' });
-        if (mission.status !== 'Open') return res.status(400).json({ error: 'Mission is not open for registration' });
+
+        const allowedStatuses = ['Open', 'InProgress'];
+        if (!allowedStatuses.includes(mission.status)) {
+            return res.status(400).json({ error: `Mission is not open for registration (Status: ${mission.status})` });
+        }
 
         // Check capacity
         if (mission.maxVolunteers && mission.currentVolunteers >= mission.maxVolunteers) {

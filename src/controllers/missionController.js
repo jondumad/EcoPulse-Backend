@@ -14,7 +14,7 @@ const createMission = async (req, res) => {
 
     try {
         const userRole = req.user.role?.name;
-        const initialStatus = userRole === 'SuperAdmin' ? 'Open' : 'Pending';
+        const initialStatus = (userRole === 'SuperAdmin' || userRole === 'Coordinator') ? 'Open' : 'Pending';
 
         const mission = await prisma.mission.create({
             data: {
@@ -96,7 +96,9 @@ const getMissions = async (req, res) => {
     if (status) {
         where.status = status;
     } else {
-        where.status = { not: 'Cancelled' };
+        // By default, only show Open missions to volunteers/browsing
+        // This prevents volunteers from seeing 'Pending' missions they can't register for.
+        where.status = 'Open';
     }
 
     if (priority) {

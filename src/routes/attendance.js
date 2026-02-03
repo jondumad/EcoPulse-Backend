@@ -15,6 +15,7 @@ router.get('/current', attendanceController.getCurrentAttendance);
 // Coordinator/Admin routes
 router.get('/missions/:id/qr-code', checkRole(['Coordinator', 'SuperAdmin']), attendanceController.getQRCode);
 router.get('/pending', checkRole(['Coordinator', 'SuperAdmin']), attendanceController.getPendingVerifications);
+router.get('/recent-activity', checkRole(['Coordinator', 'SuperAdmin']), attendanceController.getRecentActivity);
 router.put('/:id/verify', checkRole(['Coordinator', 'SuperAdmin']), attendanceController.verifyAttendance);
 
 module.exports = router;

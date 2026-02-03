@@ -51,7 +51,7 @@ const checkRole = (allowedRoles) => {
             userRoleName === roleName || userRoleId === roleMap[roleName]
         );
 
-        console.log(`[Auth Check] User: ${req.user.email}, Role: ${userRoleName}, RoleId: ${userRoleId}, Allowed: ${allowedRoles}, Result: ${hasRole}`);
+
 
         if (!hasRole) {
             return res.status(403).json({

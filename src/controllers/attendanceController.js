@@ -46,7 +46,7 @@ const getQRCode = async (req, res) => {
     console.log(`[QR Check] User: ${req.user.email}, RoleName: "${userRole}", RoleId: ${req.user.roleId}, isCoord: ${isCoordinator}, isSA: ${isSuperAdmin}`);
 
     if (!isCoordinator && !isSuperAdmin) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: 'Only coordinators can generate QR codes',
         debug: { userRole, roleId: req.user.roleId }
       });
@@ -285,13 +285,13 @@ const verifyAttendance = async (req, res) => {
           },
         }),
         prisma.notification.create({
-            data: {
-                userId: attendance.userId,
-                title: 'Points Awarded!',
-                message: `You earned ${points} points for your participation in "${attendance.mission.title}".`,
-                type: 'points_awarded',
-                relatedId: attendance.missionId
-            }
+          data: {
+            userId: attendance.userId,
+            title: 'Points Awarded!',
+            message: `You earned ${points} points for your participation in "${attendance.mission.title}".`,
+            type: 'points_awarded',
+            relatedId: attendance.missionId
+          }
         })
       ]);
     }
@@ -306,6 +306,29 @@ const verifyAttendance = async (req, res) => {
   }
 };
 
+const getRecentActivity = async (req, res) => {
+  try {
+    const activity = await prisma.attendance.findMany({
+      take: 10,
+      orderBy: {
+        createdAt: 'desc',
+      },
+      include: {
+        user: {
+          select: { name: true, email: true },
+        },
+        mission: {
+          select: { title: true },
+        },
+      },
+    });
+    res.json(activity);
+  } catch (error) {
+    console.error('Get recent activity error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 module.exports = {
   validateLocation,
   getQRCode,
@@ -314,4 +337,5 @@ module.exports = {
   getCurrentAttendance,
   getPendingVerifications,
   verifyAttendance,
+  getRecentActivity,
 };
