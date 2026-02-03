@@ -4,10 +4,10 @@
 name: ecopulse
 
 services:
-  - name: backend
+  - name: ecopulse-backend
     type: service
-    instance_type: nano
-    region: fra
+    instance_type: free
+    region: sin
     ports:
       - port: 3000
         protocol: http
