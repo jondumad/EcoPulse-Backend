@@ -9,7 +9,16 @@ const { authenticateToken, checkRole } = require('../middleware/authMiddleware')
 // Implementation plan implies auth needed for most but filtering is generic.
 // Let's protect all for now as per "authenticateToken for protected routes" roughly.
 
+// Basic Browse (Categories)
+router.get('/categories', missionController.getAllCategories);
+
 // CRUD
+// CRUD
+router.post('/batch-action', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.batchAction);
+router.post('/:id/duplicate', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.duplicateMission);
+router.post('/:id/invite', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.inviteToMission);
+router.post('/:id/contact-volunteers', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.contactVolunteers);
+
 router.get('/', authenticateToken, missionController.getMissions);
 router.get('/:id', authenticateToken, missionController.getMissionById);
 

@@ -118,7 +118,10 @@ const getMissionRegistrations = async (req, res) => {
     const { id } = req.params;
     try {
         const registrations = await prisma.registration.findMany({
-            where: { missionId: parseInt(id), status: 'Registered' },
+            where: {
+                missionId: parseInt(id),
+                status: { not: 'Cancelled' }
+            },
             include: {
                 user: {
                     select: { id: true, name: true, email: true, totalPoints: true }

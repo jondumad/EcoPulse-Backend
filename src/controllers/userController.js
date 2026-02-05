@@ -179,10 +179,86 @@ const getLeaderboard = async (req, res) => {
     }
 };
 
+const getUserStats = async (req, res) => {
+    const userId = req.user.id;
+
+    try {
+        // 1. Count completed actions
+        const actionsCompleted = await prisma.registration.count({
+            where: {
+                userId,
+                status: 'Completed'
+            }
+        });
+
+        // 2. Get user's rank
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { totalPoints: true }
+        });
+
+        const totalVolunteers = await prisma.user.count({
+            where: {
+                role: { name: 'Volunteer' }
+            }
+        });
+
+        // Rank is number of people with more points + 1
+        const rank = await prisma.user.count({
+            where: {
+                totalPoints: { gt: user.totalPoints },
+                role: { name: 'Volunteer' }
+            }
+        }) + 1;
+
+        // 3. Get weekly activity (last 7 days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+        sevenDaysAgo.setHours(0, 0, 0, 0);
+
+        const transactions = await prisma.pointTransaction.findMany({
+            where: {
+                userId,
+                createdAt: { gte: sevenDaysAgo },
+                amount: { gt: 0 }
+            }
+        });
+
+        // Format daily points for the chart
+        const weeklyActivity = [];
+        for (let i = 0; i < 7; i++) {
+            const date = new Date(sevenDaysAgo);
+            date.setDate(date.getDate() + i);
+            const dayName = date.toLocaleDateString('en-US', { weekday: 'narrow' });
+
+            const dayPoints = transactions
+                .filter(t => new Date(t.createdAt).toDateString() === date.toDateString())
+                .reduce((sum, t) => sum + t.amount, 0);
+
+            weeklyActivity.push({
+                day: dayName,
+                value: dayPoints,
+                isToday: date.toDateString() === new Date().toDateString()
+            });
+        }
+
+        res.json({
+            actionsCompleted,
+            rank,
+            totalVolunteers,
+            weeklyActivity
+        });
+    } catch (error) {
+        console.error('Get user stats error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
 module.exports = {
     getProfile,
     updateProfile,
     getLeaderboard,
+    getUserStats,
     getAllUsers,
     updateUserRole,
     updateUserStatus,

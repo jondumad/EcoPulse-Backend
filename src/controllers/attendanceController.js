@@ -93,7 +93,36 @@ const checkIn = async (req, res) => {
       });
     }
 
-    // 3. Create Attendance Record
+    // 3. Validate Time Window
+    const now = new Date();
+    const startTime = new Date(mission.startTime);
+    const endTime = new Date(mission.endTime);
+    const thirtyMinutesBefore = new Date(startTime.getTime() - 30 * 60000);
+
+    if (now < thirtyMinutesBefore) {
+      return res.status(400).json({
+        error: `Check-in allows only 30 mins before start. Please wait until ${thirtyMinutesBefore.toLocaleTimeString()}`
+      });
+    }
+
+    if (now > endTime) {
+      return res.status(400).json({ error: 'This mission has already ended.' });
+    }
+
+    // 4. Check for Double Booking (Already checked in elsewhere?)
+    const existingActiveAttendance = await prisma.attendance.findFirst({
+      where: {
+        userId,
+        checkOutTime: null,
+        missionId: { not: parseInt(missionId) } // Not this mission
+      }
+    });
+
+    if (existingActiveAttendance) {
+      return res.status(400).json({ error: 'You are already checked in to another mission!' });
+    }
+
+    // 5. Create Attendance Record
     const attendance = await prisma.attendance.upsert({
       where: {
         userId_missionId: {
@@ -329,6 +358,144 @@ const getRecentActivity = async (req, res) => {
   }
 };
 
+// Manual Management by Coordinator
+const manualCheckIn = async (req, res) => {
+  const { missionId, userId } = req.params;
+  const coordinatorId = req.user.id; // User performing the action
+
+  try {
+    const mId = parseInt(missionId);
+    const uId = parseInt(userId);
+
+    // Create/Update Attendance
+    await prisma.attendance.upsert({
+      where: {
+        userId_missionId: {
+          userId: uId,
+          missionId: mId,
+        },
+      },
+      update: {
+        checkInTime: new Date(),
+        gpsProof: 'manual_override',
+        status: 'Pending',
+      },
+      create: {
+        userId: uId,
+        missionId: mId,
+        checkInTime: new Date(),
+        gpsProof: 'manual_override',
+        status: 'Pending',
+      },
+    });
+
+    // Update Registration
+    await prisma.registration.update({
+      where: {
+        userId_missionId: {
+          userId: uId,
+          missionId: mId,
+        },
+      },
+      data: { status: 'CheckedIn' },
+    });
+
+    res.json({ message: 'User manually checked in' });
+  } catch (error) {
+    console.error('Manual check-in error:', error);
+    res.status(500).json({ error: 'Manual check-in failed' });
+  }
+};
+
+const manualComplete = async (req, res) => {
+  const { missionId, userId } = req.params;
+  const coordinatorId = req.user.id;
+
+  try {
+    const mId = parseInt(missionId);
+    const uId = parseInt(userId);
+
+    // 1. Ensure Attendance exists and is verified
+    const attendance = await prisma.attendance.upsert({
+      where: {
+        userId_missionId: {
+          userId: uId,
+          missionId: mId,
+        },
+      },
+      update: {
+        checkOutTime: new Date(), // Set checkout if needed
+        status: 'Verified',
+        verifiedBy: coordinatorId,
+        verifiedAt: new Date(),
+      },
+      create: {
+        userId: uId,
+        missionId: mId,
+        checkInTime: new Date(), // Assume they were there
+        checkOutTime: new Date(),
+        gpsProof: 'manual_override',
+        status: 'Verified',
+        verifiedBy: coordinatorId,
+        verifiedAt: new Date(),
+      },
+    });
+
+    // 2. Award Points (if not already awarded)
+    // Check if transaction exists to avoid double dip, though Transaction usually unique?
+    // Let's rely on logic similar to verifyAttendance
+    const mission = await prisma.mission.findUnique({ where: { id: mId } });
+    const points = mission.pointsValue;
+
+    // We need to be careful not to award points twice if they were already 'Completed'?
+    // The UI should prevent calling this on 'Completed' users, but backend safety is good.
+    // However, for simplicity/override, we might assume the Coordinator knows what they are doing.
+    // Let's wrap in transaction and check existing reg status?
+
+    // Simplification: Upsert logic is safe-ish. Points logic:
+    // If registration was NOT completed, award points.
+    const registration = await prisma.registration.findUnique({
+      where: { userId_missionId: { userId: uId, missionId: mId } }
+    });
+
+    if (registration.status !== 'Completed') {
+      await prisma.$transaction([
+        prisma.user.update({
+          where: { id: uId },
+          data: { totalPoints: { increment: points } },
+        }),
+        prisma.registration.update({
+          where: { userId_missionId: { userId: uId, missionId: mId } },
+          data: { status: 'Completed' }
+        }),
+        prisma.pointTransaction.create({
+          data: {
+            userId: uId,
+            missionId: mId,
+            amount: points,
+            reason: 'mission_completed_manual',
+            description: `Points awarded manually for mission: ${mission.title}`,
+          },
+        }),
+        prisma.notification.create({
+          data: {
+            userId: uId,
+            title: 'Mission Completed!',
+            message: `Your participation in "${mission.title}" has been verified by the coordinator. You earned ${points} points.`,
+            type: 'points_awarded',
+            relatedId: mId
+          }
+        })
+      ]);
+    }
+
+    res.json({ message: 'User manually marked as completed', attendance });
+  } catch (error) {
+    console.error('Manual completion error:', error);
+    res.status(500).json({ error: 'Manual completion failed' });
+  }
+};
+
 module.exports = {
   validateLocation,
   getQRCode,
@@ -338,4 +505,6 @@ module.exports = {
   getPendingVerifications,
   verifyAttendance,
   getRecentActivity,
+  manualCheckIn,
+  manualComplete
 };

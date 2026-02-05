@@ -86,24 +86,40 @@ const approveMission = async (req, res) => {
     }
 };
 
+// Helper for Distance Calculation (Haversine Formula)
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = deg2rad(lat2 - lat1);
+    const dLon = deg2rad(lon2 - lon1);
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in km
+};
+
+const deg2rad = (deg) => deg * (Math.PI / 180);
+
 // List all missions with filters
 const getMissions = async (req, res) => {
-    const { category, priority, status, search } = req.query;
+    const { category, priority, status, search, sortBy, lat, lng } = req.query;
 
     const where = {};
+    const userRole = req.user.role?.name || '';
+    const isCoordinatorOrAdmin = userRole === 'SuperAdmin' || userRole === 'Coordinator';
 
-    // Status filter (default to Open/InProgress if not specified, or all if requested)
     if (status) {
         where.status = status;
     } else {
-        // By default, only show Open missions to volunteers/browsing
-        // This prevents volunteers from seeing 'Pending' missions they can't register for.
-        where.status = 'Open';
+        if (isCoordinatorOrAdmin) {
+            // See all
+        } else {
+            where.status = { in: ['Open', 'InProgress'] };
+        }
     }
 
-    if (priority) {
-        where.priority = priority;
-    }
+    if (priority) where.priority = priority;
 
     if (search) {
         where.OR = [
@@ -124,26 +140,42 @@ const getMissions = async (req, res) => {
     }
 
     try {
-        const missions = await prisma.mission.findMany({
+        let missions = await prisma.mission.findMany({
             where,
             include: {
-                missionCategories: {
-                    include: { category: true }
-                },
-                creator: {
-                    select: { name: true, email: true } // Only public info
-                },
-                _count: {
-                    select: { registrations: true }
-                },
+                missionCategories: { include: { category: true } },
+                creator: { select: { name: true, email: true } },
+                _count: { select: { registrations: true } },
                 registrations: {
                     where: { userId: req.user.id },
                     select: { status: true }
                 }
             },
-            orderBy: { startTime: 'asc' }
+            // Default sort if NOT distance
+            orderBy: sortBy !== 'distance' ? { startTime: 'asc' } : undefined
         });
-        res.json(missions);
+
+        // Transform
+        let transformedMissions = missions.map(mission => ({
+            ...mission,
+            currentVolunteers: mission._count.registrations
+        }));
+
+        // Handle Distance Sorting
+        if (sortBy === 'distance' && lat && lng) {
+            const userLat = parseFloat(lat);
+            const userLng = parseFloat(lng);
+
+            transformedMissions = transformedMissions.map(m => {
+                const [mLat, mLng] = (m.locationGps || '0,0').split(',').map(Number);
+                const distance = calculateDistance(userLat, userLng, mLat, mLng);
+                return { ...m, distance };
+            });
+
+            transformedMissions.sort((a, b) => (a.distance || 0) - (b.distance || 0));
+        }
+
+        res.json(transformedMissions);
     } catch (error) {
         console.error('Get missions error:', error);
         res.status(500).json({ error: 'Failed to fetch missions' });
@@ -153,9 +185,15 @@ const getMissions = async (req, res) => {
 // Get single mission details
 const getMissionById = async (req, res) => {
     const { id } = req.params;
+    const missionId = parseInt(id);
+
+    if (isNaN(missionId)) {
+        return res.status(400).json({ error: 'Invalid mission ID' });
+    }
+
     try {
         const mission = await prisma.mission.findUnique({
-            where: { id: parseInt(id) },
+            where: { id: missionId },
             include: {
                 missionCategories: {
                     include: { category: true }
@@ -176,7 +214,14 @@ const getMissionById = async (req, res) => {
         if (!mission) {
             return res.status(404).json({ error: 'Mission not found' });
         }
-        res.json(mission);
+
+        // Transform the response to include currentVolunteers
+        const transformedMission = {
+            ...mission,
+            currentVolunteers: mission._count.registrations
+        };
+
+        res.json(transformedMission);
     } catch (error) {
         console.error('Get mission error:', error);
         res.status(500).json({ error: 'Detail fetch failed' });
@@ -244,11 +289,143 @@ const deleteMission = async (req, res) => {
     }
 };
 
+// Duplicate Mission
+const duplicateMission = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const original = await prisma.mission.findUnique({
+            where: { id: parseInt(id) },
+            include: { missionCategories: true }
+        });
+
+        if (!original) return res.status(404).json({ error: 'Mission not found' });
+
+        const newMission = await prisma.mission.create({
+            data: {
+                title: `${original.title} (Copy)`,
+                description: original.description,
+                locationGps: original.locationGps,
+                locationName: original.locationName,
+                startTime: original.startTime, // Keeping same time, coordinator can edit
+                endTime: original.endTime,
+                pointsValue: original.pointsValue,
+                maxVolunteers: original.maxVolunteers,
+                priority: original.priority,
+                isEmergency: false, // Reset emergency
+                status: 'Open', // Reset status
+                createdBy: req.user.id,
+                missionCategories: {
+                    create: original.missionCategories.map(mc => ({
+                        categoryId: mc.categoryId
+                    }))
+                }
+            }
+        });
+
+        res.status(201).json(newMission);
+    } catch (error) {
+        console.error('Duplicate mission error:', error);
+        res.status(500).json({ error: 'Failed to duplicate mission' });
+    }
+};
+
+// Batch Actions
+const batchAction = async (req, res) => {
+    const { ids, action } = req.body; // action: 'delete' | 'cancel' | 'emergency'
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'Invalid IDs provided' });
+    }
+
+    try {
+        let result;
+        if (action === 'cancel' || action === 'delete') {
+            // Soft delete / cancel
+            result = await prisma.mission.updateMany({
+                where: { id: { in: ids } },
+                data: { status: 'Cancelled' }
+            });
+        } else if (action === 'emergency') {
+            result = await prisma.mission.updateMany({
+                where: { id: { in: ids } },
+                data: { isEmergency: true, priority: 'Emergency' }
+            });
+            // TODO: Trigger notifications for each? Might be too spammy.
+        } else {
+            return res.status(400).json({ error: 'Invalid action' });
+        }
+
+        res.json({ message: `Batch ${action} successful`, count: result.count });
+    } catch (error) {
+        console.error('Batch action error:', error);
+        res.status(500).json({ error: 'Batch action failed' });
+    }
+};
+
+// Invite (Mock)
+const inviteToMission = async (req, res) => {
+    const { id } = req.params;
+    // In a real app, logic to generate a unique link or send emails
+    res.json({ message: 'Invite link generated', link: `https://ecopulse.app/missions/${id}/join` });
+};
+
+// Contact Volunteers
+const contactVolunteers = async (req, res) => {
+    const { id } = req.params;
+    const { message } = req.body;
+
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    try {
+        // Get all registered volunteers
+        const methodRegistrations = await prisma.registration.findMany({
+            where: { missionId: parseInt(id), status: 'Registered' },
+            select: { userId: true }
+        });
+
+        if (methodRegistrations.length === 0) {
+            return res.json({ message: 'No volunteers to contact' });
+        }
+
+        const notifications = methodRegistrations.map(reg => ({
+            userId: reg.userId,
+            title: 'Mission Update',
+            message: message,
+            type: 'mission_update',
+            relatedId: parseInt(id)
+        }));
+
+        await prisma.notification.createMany({ data: notifications });
+
+        res.json({ message: `Message sent to ${notifications.length} volunteers` });
+    } catch (error) {
+        console.error('Contact volunteers error:', error);
+        res.status(500).json({ error: 'Failed to send message' });
+    }
+};
+
+const getAllCategories = async (req, res) => {
+    try {
+        const categories = await prisma.category.findMany({
+            where: { isActive: true }
+        });
+        res.json(categories);
+    } catch (error) {
+        console.error('Get categories error:', error);
+        res.status(500).json({ error: 'Failed to fetch categories' });
+    }
+};
+
 module.exports = {
     createMission,
     getMissions,
     getMissionById,
     updateMission,
     deleteMission,
-    approveMission
+    approveMission,
+    getAllCategories,
+    duplicateMission,
+    batchAction,
+    inviteToMission,
+    contactVolunteers
 };

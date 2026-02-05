@@ -18,4 +18,8 @@ router.get('/pending', checkRole(['Coordinator', 'SuperAdmin']), attendanceContr
 router.get('/recent-activity', checkRole(['Coordinator', 'SuperAdmin']), attendanceController.getRecentActivity);
 router.put('/:id/verify', checkRole(['Coordinator', 'SuperAdmin']), attendanceController.verifyAttendance);
 
+// Manual Management
+router.post('/missions/:missionId/participants/:userId/check-in', checkRole(['Coordinator', 'SuperAdmin']), attendanceController.manualCheckIn);
+router.post('/missions/:missionId/participants/:userId/complete', checkRole(['Coordinator', 'SuperAdmin']), attendanceController.manualComplete);
+
 module.exports = router;

@@ -8,6 +8,7 @@ router.use(authenticateToken);
 
 router.get('/profile', userController.getProfile);
 router.put('/profile', userController.updateProfile);
+router.get('/stats', userController.getUserStats);
 router.get('/leaderboard', userController.getLeaderboard);
 
 // Admin Routes
