@@ -17,6 +17,7 @@ const missionRoutes = require('./routes/missions');
 const attendanceRoutes = require('./routes/attendance');
 const adminRoutes = require('./routes/admin');
 const notificationRoutes = require('./routes/notifications');
+const badgeRoutes = require('./routes/badges');
 const { initCronJobs } = require('./utils/cronJobs');
 
 app.use(cors());
@@ -32,6 +33,7 @@ app.use('/api/missions', missionRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/badges', badgeRoutes);
 
 // Basic Route
 app.get('/', (req, res) => {

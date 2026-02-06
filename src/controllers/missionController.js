@@ -139,6 +139,10 @@ const getMissions = async (req, res) => {
         };
     }
 
+    if (req.query.mine === 'true') {
+        where.createdBy = req.user.id;
+    }
+
     try {
         let missions = await prisma.mission.findMany({
             where,
@@ -155,11 +159,8 @@ const getMissions = async (req, res) => {
             orderBy: sortBy !== 'distance' ? { startTime: 'asc' } : undefined
         });
 
-        // Transform
-        let transformedMissions = missions.map(mission => ({
-            ...mission,
-            currentVolunteers: mission._count.registrations
-        }));
+        // Transform (no longer overriding currentVolunteers with raw count)
+        let transformedMissions = missions;
 
         // Handle Distance Sorting
         if (sortBy === 'distance' && lat && lng) {
@@ -215,11 +216,8 @@ const getMissionById = async (req, res) => {
             return res.status(404).json({ error: 'Mission not found' });
         }
 
-        // Transform the response to include currentVolunteers
-        const transformedMission = {
-            ...mission,
-            currentVolunteers: mission._count.registrations
-        };
+        // Transform the response (using db field directly)
+        const transformedMission = mission;
 
         res.json(transformedMission);
     } catch (error) {
