@@ -232,13 +232,25 @@ const getCurrentAttendance = async (req, res) => {
 
 const getPendingVerifications = async (req, res) => {
   try {
+    const coordinatorId = req.user.id;
+    const userRole = req.user.role?.name;
+    const isSuperAdmin = userRole === 'SuperAdmin' || req.user.roleId === 1;
+
     // Coordinators can see pending verifications
-    // In a real app, maybe only for missions they created or are assigned to.
+    // BUT we filter out missions they created to enforce separation of duties
+    const where = {
+      status: 'Pending',
+      checkOutTime: { not: null }, // Only verify after check-out
+    };
+
+    if (!isSuperAdmin) {
+      where.mission = {
+        createdBy: { not: coordinatorId }
+      };
+    }
+
     const pending = await prisma.attendance.findMany({
-      where: {
-        status: 'Pending',
-        checkOutTime: { not: null }, // Only verify after check-out
-      },
+      where,
       include: {
         user: {
           select: { id: true, name: true, email: true },
@@ -273,6 +285,16 @@ const verifyAttendance = async (req, res) => {
 
     if (!attendance) {
       return res.status(404).json({ error: 'Attendance record not found' });
+    }
+
+    // BLOCK SELF-VERIFICATION
+    const userRole = req.user.role?.name;
+    const isSuperAdmin = userRole === 'SuperAdmin' || req.user.roleId === 1;
+
+    if (!isSuperAdmin && attendance.mission.createdBy === coordinatorId) {
+      return res.status(403).json({
+        error: 'Security Policy: You cannot verify attendance for a mission you created.'
+      });
     }
 
     const updatedAttendance = await prisma.attendance.update({
@@ -361,13 +383,18 @@ const getRecentActivity = async (req, res) => {
 // Manual Management by Coordinator
 const manualCheckIn = async (req, res) => {
   const { missionId, userId } = req.params;
-  const coordinatorId = req.user.id; // User performing the action
+  const { reason } = req.body;
+  const coordinatorId = req.user.id;
+
+  if (!reason) {
+    return res.status(400).json({ error: 'Manual override requires a reason.' });
+  }
 
   try {
     const mId = parseInt(missionId);
     const uId = parseInt(userId);
 
-    // Create/Update Attendance
+    // 1. Create/Update Attendance
     await prisma.attendance.upsert({
       where: {
         userId_missionId: {
@@ -379,6 +406,7 @@ const manualCheckIn = async (req, res) => {
         checkInTime: new Date(),
         gpsProof: 'manual_override',
         status: 'Pending',
+        overrideReason: reason,
       },
       create: {
         userId: uId,
@@ -386,10 +414,11 @@ const manualCheckIn = async (req, res) => {
         checkInTime: new Date(),
         gpsProof: 'manual_override',
         status: 'Pending',
+        overrideReason: reason,
       },
     });
 
-    // Update Registration
+    // 2. Update Registration
     await prisma.registration.update({
       where: {
         userId_missionId: {
@@ -400,7 +429,18 @@ const manualCheckIn = async (req, res) => {
       data: { status: 'CheckedIn' },
     });
 
-    res.json({ message: 'User manually checked in' });
+    // 3. Log the override
+    await prisma.manualOverrideLog.create({
+      data: {
+        coordinatorId,
+        missionId: mId,
+        userId: uId,
+        actionType: 'check_in',
+        reason
+      }
+    });
+
+    res.json({ message: 'User manually checked in and logged' });
   } catch (error) {
     console.error('Manual check-in error:', error);
     res.status(500).json({ error: 'Manual check-in failed' });
@@ -409,7 +449,12 @@ const manualCheckIn = async (req, res) => {
 
 const manualComplete = async (req, res) => {
   const { missionId, userId } = req.params;
+  const { reason } = req.body;
   const coordinatorId = req.user.id;
+
+  if (!reason) {
+    return res.status(400).json({ error: 'Manual override requires a reason.' });
+  }
 
   try {
     const mId = parseInt(missionId);
@@ -428,6 +473,7 @@ const manualComplete = async (req, res) => {
         status: 'Verified',
         verifiedBy: coordinatorId,
         verifiedAt: new Date(),
+        overrideReason: reason,
       },
       create: {
         userId: uId,
@@ -438,22 +484,14 @@ const manualComplete = async (req, res) => {
         status: 'Verified',
         verifiedBy: coordinatorId,
         verifiedAt: new Date(),
+        overrideReason: reason,
       },
     });
 
     // 2. Award Points (if not already awarded)
-    // Check if transaction exists to avoid double dip, though Transaction usually unique?
-    // Let's rely on logic similar to verifyAttendance
     const mission = await prisma.mission.findUnique({ where: { id: mId } });
     const points = mission.pointsValue;
 
-    // We need to be careful not to award points twice if they were already 'Completed'?
-    // The UI should prevent calling this on 'Completed' users, but backend safety is good.
-    // However, for simplicity/override, we might assume the Coordinator knows what they are doing.
-    // Let's wrap in transaction and check existing reg status?
-
-    // Simplification: Upsert logic is safe-ish. Points logic:
-    // If registration was NOT completed, award points.
     const registration = await prisma.registration.findUnique({
       where: { userId_missionId: { userId: uId, missionId: mId } }
     });
@@ -485,11 +523,32 @@ const manualComplete = async (req, res) => {
             type: 'points_awarded',
             relatedId: mId
           }
+        }),
+        // 3. Log the override
+        prisma.manualOverrideLog.create({
+          data: {
+            coordinatorId,
+            missionId: mId,
+            userId: uId,
+            actionType: 'complete',
+            reason
+          }
         })
       ]);
+    } else {
+      // If already completed, still log the override if it was called (though UI should prevent)
+      await prisma.manualOverrideLog.create({
+        data: {
+          coordinatorId,
+          missionId: mId,
+          userId: uId,
+          actionType: 'complete',
+          reason
+        }
+      });
     }
 
-    res.json({ message: 'User manually marked as completed', attendance });
+    res.json({ message: 'User manually marked as completed and logged', attendance });
   } catch (error) {
     console.error('Manual completion error:', error);
     res.status(500).json({ error: 'Manual completion failed' });

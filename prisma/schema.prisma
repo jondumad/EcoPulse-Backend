@@ -8,9 +8,9 @@ datasource db {
 }
 
 model Role {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique // "SuperAdmin", "Coordinator", "Volunteer"
-  users     User[]
+  id    Int    @id @default(autoincrement())
+  name  String @unique // "SuperAdmin", "Coordinator", "Volunteer"
+  users User[]
 }
 
 model User {
@@ -24,57 +24,98 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  role              Role               @relation(fields: [roleId], references: [id])
-  attendance        Attendance[]
-  registrations     Registration[]
-  userBadges        UserBadge[]
-  notifications     Notification[]
-  pointTransactions PointTransaction[]
-  createdMissions   Mission[]          @relation("MissionCreator")
+  role                 Role                @relation(fields: [roleId], references: [id])
+  attendance           Attendance[]
+  registrations        Registration[]
+  userBadges           UserBadge[]
+  notifications        Notification[]
+  pointTransactions    PointTransaction[]
+  createdMissions      Mission[]           @relation("MissionCreator")
+  coordinatorOverrides ManualOverrideLog[] @relation("CoordinatorOverrides")
+  userOverrides        ManualOverrideLog[] @relation("UserOverrides")
+  feedback             MissionFeedback[]
+  missionComments      MissionComment[]
 }
 
 model Mission {
-  id                Int      @id @default(autoincrement())
-  title             String
-  description       String
-  locationGps       String // Store as "lat,lng"
-  locationName      String? // e.g., "Central Park, Manhattan"
-  startTime         DateTime
-  endTime           DateTime
-  pointsValue       Int
-  maxVolunteers     Int?
-  currentVolunteers Int      @default(0)
-  createdBy         Int
-  priority          String   @default("Normal") // "Normal", "Urgent", "Emergency"
-  isEmergency       Boolean  @default(false)
-  status            String   @default("Open") // "Open", "InProgress", "Completed", "Cancelled"
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                     Int      @id @default(autoincrement())
+  title                  String
+  description            String
+  locationGps            String // Store as "lat,lng"
+  locationName           String? // e.g., "Central Park, Manhattan"
+  startTime              DateTime
+  endTime                DateTime
+  pointsValue            Int
+  maxVolunteers          Int?
+  currentVolunteers      Int      @default(0)
+  createdBy              Int
+  priority               String   @default("Normal") // "Normal", "Urgent", "Emergency"
+  emergencyJustification String?
+  isTemplate             Boolean  @default(false)
+  isEmergency            Boolean  @default(false)
+  autoPromote            Boolean  @default(true) // Auto-promote from waitlist when slots open
+  status                 String   @default("Open") // "Open", "InProgress", "Completed", "Cancelled"
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
-  creator           User              @relation("MissionCreator", fields: [createdBy], references: [id])
-  attendance        Attendance[]
-  registrations     Registration[]
-  impactMetrics     ImpactMetric[]
-  missionCategories MissionCategory[]
-  recurringMission  RecurringMission?
+  creator            User                   @relation("MissionCreator", fields: [createdBy], references: [id])
+  attendance         Attendance[]
+  registrations      Registration[]
+  impactMetrics      ImpactMetric[]
+  missionCategories  MissionCategory[]
+  recurringMission   RecurringMission?
+  manualOverrideLogs ManualOverrideLog[]
+  feedback           MissionFeedback[]
+  comments           MissionComment[]
+  checklist          MissionChecklistItem[]
 
   @@index([startTime])
   @@index([priority])
   @@index([status])
 }
 
+model MissionComment {
+  id        Int      @id @default(autoincrement())
+  missionId Int
+  userId    Int
+  content   String
+  isPinned  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mission Mission @relation(fields: [missionId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([missionId])
+}
+
+model MissionChecklistItem {
+  id          Int      @id @default(autoincrement())
+  missionId   Int
+  content     String
+  isCompleted Boolean  @default(false)
+  completedBy Int? // User ID who completed it
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  mission Mission @relation(fields: [missionId], references: [id])
+
+  @@index([missionId])
+}
+
 model Attendance {
-  id           Int       @id @default(autoincrement())
-  userId       Int
-  missionId    Int
-  checkInTime  DateTime  @default(now())
-  checkOutTime DateTime?
-  status       String    @default("Pending") // "Pending", "Verified", "Rejected"
-  gpsProof     String? // Actual GPS coordinates at check-in
-  totalHours   Float?
-  verifiedBy   Int? // Coordinator who verified
-  verifiedAt   DateTime?
-  createdAt    DateTime  @default(now())
+  id             Int       @id @default(autoincrement())
+  userId         Int
+  missionId      Int
+  checkInTime    DateTime  @default(now())
+  checkOutTime   DateTime?
+  status         String    @default("Pending") // "Pending", "Verified", "Rejected"
+  gpsProof       String? // Actual GPS coordinates at check-in
+  overrideReason String? // Reason for manual override if applicable
+  totalHours     Float?
+  verifiedBy     Int? // Coordinator who verified
+  verifiedAt     DateTime?
+  createdAt      DateTime  @default(now())
 
   user    User    @relation(fields: [userId], references: [id])
   mission Mission @relation(fields: [missionId], references: [id])
@@ -84,12 +125,13 @@ model Attendance {
 }
 
 model Registration {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  missionId Int
-  status    String   @default("Registered") // "Registered", "Waitlisted", "Cancelled"
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  missionId  Int
+  status     String   @default("Registered") // "Registered", "Waitlisted", "Cancelled"
+  isPriority Boolean  @default(false) // Coordinator can manually prioritize
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   user    User    @relation(fields: [userId], references: [id])
   mission Mission @relation(fields: [missionId], references: [id])
@@ -208,4 +250,36 @@ model RecurringMission {
   createdAt     DateTime  @default(now())
 
   mission Mission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+}
+
+model ManualOverrideLog {
+  id            Int      @id @default(autoincrement())
+  coordinatorId Int
+  missionId     Int
+  userId        Int
+  actionType    String // "check_in", "complete"
+  reason        String?
+  createdAt     DateTime @default(now())
+
+  coordinator User    @relation("CoordinatorOverrides", fields: [coordinatorId], references: [id])
+  mission     Mission @relation(fields: [missionId], references: [id])
+  user        User    @relation("UserOverrides", fields: [userId], references: [id])
+
+  @@index([coordinatorId])
+  @@index([missionId])
+}
+
+model MissionFeedback {
+  id        Int      @id @default(autoincrement())
+  missionId Int
+  userId    Int
+  rating    Int // 1-5
+  comment   String?
+  createdAt DateTime @default(now())
+
+  mission Mission @relation(fields: [missionId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([userId, missionId]) // One feedback per user per mission
+  @@index([missionId])
 }

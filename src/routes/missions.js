@@ -12,6 +12,9 @@ const { authenticateToken, checkRole } = require('../middleware/authMiddleware')
 // Basic Browse (Categories)
 router.get('/categories', missionController.getAllCategories);
 
+// Templates
+router.get('/templates', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.getTemplates);
+
 // CRUD
 // CRUD
 router.post('/batch-action', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.batchAction);
@@ -33,5 +36,9 @@ router.delete('/:id/register', authenticateToken, registrationController.cancelR
 
 // Coordinator view of registrations
 router.get('/:id/registrations', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), registrationController.getMissionRegistrations);
+
+// Coordinator waitlist management
+router.post('/registrations/:registrationId/promote', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), registrationController.promoteUser);
+router.patch('/registrations/:registrationId/priority', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), registrationController.setPriority);
 
 module.exports = router;

@@ -6,7 +6,8 @@ const createMission = async (req, res) => {
     const {
         title, description, locationGps, locationName,
         startTime, endTime, pointsValue, maxVolunteers,
-        priority, isEmergency, categoryIds
+        priority, isEmergency, categoryIds,
+        emergencyJustification, isTemplate
     } = req.body;
 
     // Assumes auth middleware populates req.user
@@ -15,6 +16,32 @@ const createMission = async (req, res) => {
     try {
         const userRole = req.user.role?.name;
         const initialStatus = (userRole === 'SuperAdmin' || userRole === 'Coordinator') ? 'Open' : 'Pending';
+
+        // 1. EMERGENCY VALIDATION
+        const reallyEmergency = isEmergency || priority === 'Emergency';
+        if (reallyEmergency) {
+            if (!emergencyJustification || emergencyJustification.length < 20) {
+                return res.status(400).json({
+                    error: 'Emergency missions require a detailed justification (min 20 characters).'
+                });
+            }
+
+            // 2. RATE LIMITING (Max 3 emergency missions per 24h)
+            const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+            const emergencyCount = await prisma.mission.count({
+                where: {
+                    createdBy: creatorId,
+                    isEmergency: true,
+                    createdAt: { gte: twentyFourHoursAgo }
+                }
+            });
+
+            if (emergencyCount >= 3) {
+                return res.status(429).json({
+                    error: 'Emergency Rate Limit: You can only create 3 emergency missions per 24 hours.'
+                });
+            }
+        }
 
         const mission = await prisma.mission.create({
             data: {
@@ -26,8 +53,10 @@ const createMission = async (req, res) => {
                 endTime: new Date(endTime),
                 pointsValue: parseInt(pointsValue),
                 maxVolunteers: maxVolunteers ? parseInt(maxVolunteers) : null,
-                priority: priority || (isEmergency ? 'Emergency' : 'Normal'),
-                isEmergency: isEmergency || false,
+                priority: priority || (reallyEmergency ? 'Emergency' : 'Normal'),
+                isEmergency: reallyEmergency,
+                emergencyJustification,
+                isTemplate: isTemplate || false,
                 status: initialStatus,
                 createdBy: creatorId,
                 missionCategories: {
@@ -100,6 +129,23 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
 };
 
 const deg2rad = (deg) => deg * (Math.PI / 180);
+
+// List mission templates
+const getTemplates = async (req, res) => {
+    try {
+        const templates = await prisma.mission.findMany({
+            where: {
+                isTemplate: true,
+                createdBy: req.user.id // Only show own templates for now
+            },
+            orderBy: { title: 'asc' }
+        });
+        res.json(templates);
+    } catch (error) {
+        console.error('Get templates error:', error);
+        res.status(500).json({ error: 'Failed to fetch templates' });
+    }
+};
 
 // List all missions with filters
 const getMissions = async (req, res) => {
@@ -329,7 +375,7 @@ const duplicateMission = async (req, res) => {
 
 // Batch Actions
 const batchAction = async (req, res) => {
-    const { ids, action } = req.body; // action: 'delete' | 'cancel' | 'emergency'
+    const { ids, action, justification } = req.body; // action: 'delete' | 'cancel' | 'emergency'
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({ error: 'Invalid IDs provided' });
@@ -344,11 +390,25 @@ const batchAction = async (req, res) => {
                 data: { status: 'Cancelled' }
             });
         } else if (action === 'emergency') {
+            if (!justification || justification.length < 20) {
+                return res.status(400).json({
+                    error: 'Batch emergency actions require a justification (min 20 characters).'
+                });
+            }
+
             result = await prisma.mission.updateMany({
                 where: { id: { in: ids } },
-                data: { isEmergency: true, priority: 'Emergency' }
+                data: {
+                    isEmergency: true,
+                    priority: 'Emergency',
+                    emergencyJustification: justification
+                }
             });
-            // TODO: Trigger notifications for each? Might be too spammy.
+            // Trigger notifications for each?
+            const missions = await prisma.mission.findMany({ where: { id: { in: ids } } });
+            for (const m of missions) {
+                await triggerEmergencyNotification(m);
+            }
         } else {
             return res.status(400).json({ error: 'Invalid action' });
         }
@@ -425,5 +485,6 @@ module.exports = {
     duplicateMission,
     batchAction,
     inviteToMission,
-    contactVolunteers
+    contactVolunteers,
+    getTemplates
 };

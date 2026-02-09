@@ -1,11 +1,16 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const http = require('http'); // Add this
 const { PrismaClient } = require('@prisma/client');
+const { initSocket } = require('./socket'); // Add this
 
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app); // Wrap app
+initSocket(server); // Initialize Socket.io
+
 const prisma = new PrismaClient({
     datasourceUrl: process.env.DATABASE_URL,
 });
@@ -18,6 +23,7 @@ const attendanceRoutes = require('./routes/attendance');
 const adminRoutes = require('./routes/admin');
 const notificationRoutes = require('./routes/notifications');
 const badgeRoutes = require('./routes/badges');
+const boardRoutes = require('./routes/missionBoard'); // New routes
 const { initCronJobs } = require('./utils/cronJobs');
 
 app.use(cors());
@@ -34,8 +40,9 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/badges', badgeRoutes);
+app.use('/api/missions', boardRoutes); // Mount board routes under missions
 
-// Basic Route
+// ... rest of the file ...
 app.get('/', (req, res) => {
     res.json({ message: 'Welcome to the Eco-Pulse API' });
 });
@@ -58,6 +65,6 @@ app.get('/health', async (req, res) => {
     }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT} (accessible on all interfaces)`);
+server.listen(PORT, '0.0.0.0', () => { // Use server.listen
+    console.log(`Server with Socket.io is running on port ${PORT}`);
 });
