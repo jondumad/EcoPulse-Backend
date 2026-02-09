@@ -1,5 +1,6 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
@@ -115,8 +116,80 @@ const getMe = async (req, res) => {
     });
 };
 
+const forgotPassword = async (req, res) => {
+    const { email } = req.body;
+
+    try {
+        const user = await prisma.user.findUnique({ where: { email } });
+        if (!user) {
+            // Return success even if user not found for security reasons
+            return res.json({ message: 'If an account with that email exists, we have sent a reset link.' });
+        }
+
+        // Generate token
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const resetTokenExpires = new Date(Date.now() + 3600000); // 1 hour from now
+
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                resetToken,
+                resetTokenExpires,
+            },
+        });
+
+        // Mock email sending
+        console.log('--- PASSWORD RESET EMAIL MOCK ---');
+        console.log(`To: ${email}`);
+        console.log(`Reset Link: http://localhost:3000/reset-password?token=${resetToken}`);
+        console.log('----------------------------------');
+
+        res.json({ message: 'If an account with that email exists, we have sent a reset link.' });
+    } catch (error) {
+        console.error('Forgot password error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+const resetPassword = async (req, res) => {
+    const { token, newPassword } = req.body;
+
+    try {
+        const user = await prisma.user.findFirst({
+            where: {
+                resetToken: token,
+                resetTokenExpires: {
+                    gt: new Date(),
+                },
+            },
+        });
+
+        if (!user) {
+            return res.status(400).json({ error: 'Invalid or expired reset token' });
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                passwordHash: hashedPassword,
+                resetToken: null,
+                resetTokenExpires: null,
+            },
+        });
+
+        res.json({ message: 'Password has been reset successfully' });
+    } catch (error) {
+        console.error('Reset password error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
 module.exports = {
     register,
     login,
     getMe,
+    forgotPassword,
+    resetPassword,
 };

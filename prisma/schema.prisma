@@ -21,6 +21,8 @@ model User {
   roleId       Int
   totalPoints  Int      @default(0)
   isActive     Boolean  @default(true)
+  resetToken   String?  @unique
+  resetTokenExpires DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
