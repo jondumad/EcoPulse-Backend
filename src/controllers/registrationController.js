@@ -45,8 +45,8 @@ const registerForMission = async (req, res) => {
             });
 
             if (existing) {
-                if (existing.status === 'Cancelled') {
-                    // Re-register or re-join waitlist
+                if (existing.status === 'Cancelled' || existing.status === 'Invited') {
+                    // Re-register, re-join waitlist, or accept invite
                     const updated = await tx.registration.update({
                         where: { id: existing.id },
                         data: { status: registrationStatus }
@@ -339,10 +339,95 @@ const setPriority = async (req, res) => {
     }
 };
 
+// Coordinator: Invite a user to a mission
+const inviteUserToMission = async (req, res) => {
+    const { id } = req.params; // missionId
+    const { userId } = req.body;
+
+    try {
+        const missionId = parseInt(id);
+        const result = await prisma.$transaction(async (tx) => {
+            const mission = await tx.mission.findUnique({ where: { id: missionId } });
+            if (!mission) throw new Error('Mission not found');
+
+            const existing = await tx.registration.findUnique({
+                where: { userId_missionId: { userId, missionId } }
+            });
+
+            if (existing) {
+                if (existing.status === 'Cancelled' || existing.status === 'Declined') {
+                    // Re-invite
+                    await tx.registration.update({
+                        where: { id: existing.id },
+                        data: { status: 'Invited' }
+                    });
+                } else {
+                    throw new Error('User is already registered, waitlisted, or invited');
+                }
+            } else {
+                await tx.registration.create({
+                    data: {
+                        userId,
+                        missionId,
+                        status: 'Invited'
+                    }
+                });
+            }
+
+            // Notify user
+            await tx.notification.create({
+                data: {
+                    userId,
+                    title: 'Mission Invitation',
+                    message: `You have been invited to join ${mission.title}.`,
+                    type: 'mission_invite',
+                    relatedId: missionId
+                }
+            });
+
+            return { message: 'User invited successfully' };
+        });
+
+        res.json(result);
+    } catch (error) {
+        console.error('Invite user error:', error);
+        res.status(400).json({ error: error.message });
+    }
+};
+
+// Volunteer: Decline an invitation
+const declineInvitation = async (req, res) => {
+    const { id } = req.params; // missionId
+    const userId = req.user.id;
+
+    try {
+        const missionId = parseInt(id);
+        const registration = await prisma.registration.findUnique({
+            where: { userId_missionId: { userId, missionId } }
+        });
+
+        if (!registration || registration.status !== 'Invited') {
+            return res.status(400).json({ error: 'No pending invitation found' });
+        }
+
+        await prisma.registration.update({
+            where: { id: registration.id },
+            data: { status: 'Declined' } // Using 'Declined' status
+        });
+
+        res.json({ message: 'Invitation declined' });
+    } catch (error) {
+        console.error('Decline invitation error:', error);
+        res.status(500).json({ error: 'Failed to decline invitation' });
+    }
+};
+
 module.exports = {
     registerForMission,
     cancelRegistration,
     getMissionRegistrations,
     promoteUser,
-    setPriority
+    setPriority,
+    inviteUserToMission,
+    declineInvitation
 };

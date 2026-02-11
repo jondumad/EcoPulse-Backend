@@ -53,6 +53,7 @@ const register = async (req, res) => {
                 email: user.email,
                 role: user.role.name,
                 totalPoints: user.totalPoints,
+                createdAt: user.createdAt,
             },
         });
     } catch (error) {
@@ -96,6 +97,7 @@ const login = async (req, res) => {
                 email: user.email,
                 role: user.role.name,
                 totalPoints: user.totalPoints,
+                createdAt: user.createdAt,
             },
         });
     } catch (error) {
@@ -113,6 +115,7 @@ const getMe = async (req, res) => {
         email: user.email,
         role: user.role.name,
         totalPoints: user.totalPoints,
+        createdAt: user.createdAt,
     });
 };
 

@@ -13,10 +13,11 @@ function generateQRToken(missionId, coordinatorId) {
     missionId,
     coordinatorId,
     type: 'attendance_qr',
+    nonce: require('crypto').randomBytes(8).toString('hex') // Ensure unique token every time
   };
 
-  // Token expires in 5 minutes as per requirements
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '5m' });
+  // Shorten expiration to 1 minute for better security
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '1m' });
 }
 
 /**
