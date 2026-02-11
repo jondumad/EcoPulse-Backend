@@ -64,12 +64,18 @@ const getAllUsers = async (req, res) => {
 
     try {
         const where = {};
+
+        // Improved search logic: split query into words and search each
         if (search) {
-            where.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
-                { email: { contains: search, mode: 'insensitive' } },
-            ];
+            const searchTerms = search.trim().split(/\s+/);
+            where.AND = searchTerms.map(term => ({
+                OR: [
+                    { name: { contains: term, mode: 'insensitive' } },
+                    { email: { contains: term, mode: 'insensitive' } },
+                ]
+            }));
         }
+
         if (roleId) {
             where.roleId = parseInt(roleId);
         }
@@ -183,7 +189,67 @@ const getUserStats = async (req, res) => {
     const userId = req.user.id;
 
     try {
-        // 1. Count completed actions
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            include: { role: true }
+        });
+
+        if (user.role.name === 'Coordinator') {
+            // Coordinator stats
+            const missionsManaged = await prisma.mission.count({
+                where: { createdBy: userId }
+            });
+
+            const totalVerifications = await prisma.attendance.count({
+                where: { verifiedBy: userId, status: 'Verified' }
+            });
+
+            const missions = await prisma.mission.findMany({
+                where: { createdBy: userId },
+                select: { id: true }
+            });
+
+            const missionIds = missions.map(m => m.id);
+
+            // Weekly activity for coordinator: Number of verifications performed
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+            sevenDaysAgo.setHours(0, 0, 0, 0);
+
+            const attendanceLogs = await prisma.attendance.findMany({
+                where: {
+                    verifiedBy: userId,
+                    verifiedAt: { gte: sevenDaysAgo },
+                    status: 'Verified'
+                }
+            });
+
+            const weeklyActivity = [];
+            for (let i = 0; i < 7; i++) {
+                const date = new Date(sevenDaysAgo);
+                date.setDate(date.getDate() + i);
+                const dayName = date.toLocaleDateString('en-US', { weekday: 'narrow' });
+
+                const dayVerifications = attendanceLogs
+                    .filter(a => new Date(a.verifiedAt).toDateString() === date.toDateString())
+                    .length;
+
+                weeklyActivity.push({
+                    day: dayName,
+                    value: dayVerifications,
+                    isToday: date.toDateString() === new Date().toDateString()
+                });
+            }
+
+            return res.json({
+                missionsManaged,
+                totalVerifications,
+                weeklyActivity,
+                role: 'Coordinator'
+            });
+        }
+
+        // Volunteer stats (default logic)
         const actionsCompleted = await prisma.registration.count({
             where: {
                 userId,
@@ -191,11 +257,16 @@ const getUserStats = async (req, res) => {
             }
         });
 
-        // 2. Get user's rank
-        const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { totalPoints: true }
+        const attendanceStats = await prisma.attendance.aggregate({
+            where: {
+                userId,
+                status: 'Verified'
+            },
+            _sum: {
+                totalHours: true
+            }
         });
+        const totalHours = attendanceStats._sum.totalHours || 0;
 
         const totalVolunteers = await prisma.user.count({
             where: {
@@ -203,7 +274,6 @@ const getUserStats = async (req, res) => {
             }
         });
 
-        // Rank is number of people with more points + 1
         const rank = await prisma.user.count({
             where: {
                 totalPoints: { gt: user.totalPoints },
@@ -211,7 +281,6 @@ const getUserStats = async (req, res) => {
             }
         }) + 1;
 
-        // 3. Get weekly activity (last 7 days)
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
         sevenDaysAgo.setHours(0, 0, 0, 0);
@@ -224,7 +293,6 @@ const getUserStats = async (req, res) => {
             }
         });
 
-        // Format daily points for the chart
         const weeklyActivity = [];
         for (let i = 0; i < 7; i++) {
             const date = new Date(sevenDaysAgo);
@@ -244,9 +312,11 @@ const getUserStats = async (req, res) => {
 
         res.json({
             actionsCompleted,
+            totalHours: Math.round(totalHours * 10) / 10,
             rank,
             totalVolunteers,
-            weeklyActivity
+            weeklyActivity,
+            role: 'Volunteer'
         });
     } catch (error) {
         console.error('Get user stats error:', error);

@@ -33,9 +33,19 @@ router.delete('/:id', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']
 // Volunteers register themselves
 router.post('/:id/register', authenticateToken, registrationController.registerForMission);
 router.delete('/:id/register', authenticateToken, registrationController.cancelRegistration);
+router.post('/:id/decline', authenticateToken, registrationController.declineInvitation);
 
 // Coordinator view of registrations
 router.get('/:id/registrations', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), registrationController.getMissionRegistrations);
+router.post('/:id/invite-user', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), registrationController.inviteUserToMission);
+
+// Collaborators
+router.get('/:id/collaborators', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.getCollaborators);
+router.post('/:id/collaborators', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.addCollaborator);
+router.delete('/:id/collaborators', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.removeCollaborator);
+
+// Individual volunteer notification
+router.post('/:id/participants/:userId/notify', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), missionController.contactVolunteer);
 
 // Coordinator waitlist management
 router.post('/registrations/:registrationId/promote', authenticateToken, checkRole(['Coordinator', 'SuperAdmin']), registrationController.promoteUser);

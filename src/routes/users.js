@@ -13,7 +13,7 @@ router.get('/leaderboard', userController.getLeaderboard);
 
 // Admin Routes
 const { checkRole } = require('../middleware/authMiddleware');
-router.get('/', checkRole(['SuperAdmin']), userController.getAllUsers);
+router.get('/', checkRole(['SuperAdmin', 'Coordinator']), userController.getAllUsers);
 router.put('/:id/role', checkRole(['SuperAdmin']), userController.updateUserRole);
 router.put('/:id/status', checkRole(['SuperAdmin']), userController.updateUserStatus);
 router.put('/:id/reset-password', checkRole(['SuperAdmin']), userController.resetUserPassword);

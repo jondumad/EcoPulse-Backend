@@ -17,12 +17,22 @@ router.get('/:id/board', authenticateToken, async (req, res) => {
                 },
                 checklist: {
                     orderBy: { createdAt: 'asc' }
-                }
+                },
+                collaborators: { select: { id: true } }
             }
         });
 
         if (!mission) {
             return res.status(404).json({ message: 'Mission not found' });
+        }
+
+        // Access Control
+        const isCreator = mission.createdBy === req.user.id;
+        const isCollaborator = mission.collaborators.some(c => c.id === req.user.id);
+        const isSuperAdmin = req.user.role?.name === 'SuperAdmin' || req.user.roleId === 1;
+
+        if (!isCreator && !isCollaborator && !isSuperAdmin) {
+            return res.status(403).json({ message: 'Unauthorized: Not a member of the mission team' });
         }
 
         res.json({

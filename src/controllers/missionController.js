@@ -7,7 +7,7 @@ const createMission = async (req, res) => {
         title, description, locationGps, locationName,
         startTime, endTime, pointsValue, maxVolunteers,
         priority, isEmergency, categoryIds,
-        emergencyJustification, isTemplate
+        emergencyJustification, isTemplate, status
     } = req.body;
 
     // Assumes auth middleware populates req.user
@@ -15,7 +15,7 @@ const createMission = async (req, res) => {
 
     try {
         const userRole = req.user.role?.name;
-        const initialStatus = (userRole === 'SuperAdmin' || userRole === 'Coordinator') ? 'Open' : 'Pending';
+        const initialStatus = status || ((userRole === 'SuperAdmin' || userRole === 'Coordinator') ? 'Open' : 'Pending');
 
         // 1. EMERGENCY VALIDATION
         const reallyEmergency = isEmergency || priority === 'Emergency';
@@ -286,21 +286,35 @@ const updateMission = async (req, res) => {
     if (updateData.startTime) updateData.startTime = new Date(updateData.startTime);
     if (updateData.endTime) updateData.endTime = new Date(updateData.endTime);
 
+    // Extract categoryIds if present
+    const categoryIds = updateData.categoryIds;
+    delete updateData.categoryIds;
+
     try {
-        // Should add check to ensure only creator or Admin can update
-        // Skipped for brevity but assumed checked in middleware or basic check here:
-        const existing = await prisma.mission.findUnique({ where: { id: parseInt(id) } });
+        const existing = await prisma.mission.findUnique({ 
+            where: { id: parseInt(id) },
+            include: { collaborators: { select: { id: true } } }
+        });
         if (!existing) return res.status(404).json({ error: 'Not found' });
 
         const userRole = req.user.role?.name || "";
+        const isCollaborator = existing.collaborators.some(c => c.id === req.user.id);
         const isAuthorized = userRole === 'SuperAdmin' ||
-            userRole === 'Coordinator' ||
-            req.user.roleId === 1 ||
-            req.user.roleId === 2 ||
-            existing.createdBy === req.user.id;
+            existing.createdBy === req.user.id ||
+            isCollaborator;
 
         if (!isAuthorized) {
             return res.status(403).json({ error: 'Unauthorized to update this mission' });
+        }
+
+        // Prepare relational update for categories if provided
+        if (categoryIds) {
+            updateData.missionCategories = {
+                deleteMany: {}, // Clear current categories
+                create: categoryIds.map(catId => ({
+                    categoryId: parseInt(catId)
+                }))
+            };
         }
 
         const mission = await prisma.mission.update({
@@ -310,10 +324,129 @@ const updateMission = async (req, res) => {
                 missionCategories: { include: { category: true } }
             }
         });
+
+        // Trigger notification if status changed to InProgress (Mission Starting)
+        if (updateData.status === 'InProgress') {
+            await notifyVolunteersMissionStarted(mission);
+        }
+
         res.json(mission);
     } catch (error) {
         console.error('Update mission error:', error);
         res.status(500).json({ error: 'Failed to update mission' });
+    }
+};
+
+const addCollaborator = async (req, res) => {
+    const { id } = req.params;
+    const { userId } = req.body; // ID of the coordinator to invite
+
+    try {
+        const mission = await prisma.mission.findUnique({ where: { id: parseInt(id) } });
+        if (!mission) return res.status(404).json({ error: 'Mission not found' });
+
+        // Only Creator or SuperAdmin can invite
+        if (mission.createdBy !== req.user.id && req.user.role?.name !== 'SuperAdmin') {
+            return res.status(403).json({ error: 'Only the mission creator can invite collaborators' });
+        }
+
+        await prisma.mission.update({
+            where: { id: parseInt(id) },
+            data: {
+                collaborators: {
+                    connect: { id: parseInt(userId) }
+                }
+            }
+        });
+
+        // Notify the invited coordinator
+        await prisma.notification.create({
+            data: {
+                userId: parseInt(userId),
+                title: 'Mission Collaboration Invite',
+                message: `You have been added as a collaborator to "${mission.title}"`,
+                type: 'collaboration_invite',
+                relatedId: mission.id
+            }
+        });
+
+        res.json({ message: 'Collaborator added successfully' });
+    } catch (error) {
+        console.error('Add collaborator error:', error);
+        res.status(500).json({ error: 'Failed to add collaborator' });
+    }
+};
+
+const removeCollaborator = async (req, res) => {
+    const { id } = req.params;
+    const { userId } = req.body;
+
+    try {
+        const mission = await prisma.mission.findUnique({ where: { id: parseInt(id) } });
+        if (!mission) return res.status(404).json({ error: 'Mission not found' });
+
+        // Only Creator or SuperAdmin can remove
+        if (mission.createdBy !== req.user.id && req.user.role?.name !== 'SuperAdmin') {
+            return res.status(403).json({ error: 'Only the mission creator can remove collaborators' });
+        }
+
+        await prisma.mission.update({
+            where: { id: parseInt(id) },
+            data: {
+                collaborators: {
+                    disconnect: { id: parseInt(userId) }
+                }
+            }
+        });
+
+        res.json({ message: 'Collaborator removed successfully' });
+    } catch (error) {
+        console.error('Remove collaborator error:', error);
+        res.status(500).json({ error: 'Failed to remove collaborator' });
+    }
+};
+
+const getCollaborators = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const mission = await prisma.mission.findUnique({
+            where: { id: parseInt(id) },
+            include: {
+                collaborators: {
+                    select: { id: true, name: true, email: true, role: { select: { name: true } } }
+                }
+            }
+        });
+        if (!mission) return res.status(404).json({ error: 'Mission not found' });
+        res.json(mission.collaborators);
+    } catch (error) {
+        console.error('Get collaborators error:', error);
+        res.status(500).json({ error: 'Failed to fetch collaborators' });
+    }
+};
+
+const notifyVolunteersMissionStarted = async (mission) => {
+    try {
+        // Get all registered volunteers
+        const registrations = await prisma.registration.findMany({
+            where: { missionId: mission.id, status: 'Registered' },
+            select: { userId: true }
+        });
+
+        if (registrations.length === 0) return;
+
+        const notifications = registrations.map(reg => ({
+            userId: reg.userId,
+            title: 'Mission Started!',
+            message: `${mission.title} is now in progress. Remember to check in!`,
+            type: 'mission_update',
+            relatedId: mission.id
+        }));
+
+        await prisma.notification.createMany({ data: notifications });
+        console.log(`Dispatched ${notifications.length} "started" notifications.`);
+    } catch (error) {
+        console.error('Mission start notification error:', error);
     }
 };
 
@@ -462,6 +595,31 @@ const contactVolunteers = async (req, res) => {
     }
 };
 
+// Contact Individual Volunteer
+const contactVolunteer = async (req, res) => {
+    const { id, userId } = req.params;
+    const { message } = req.body;
+
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    try {
+        await prisma.notification.create({
+            data: {
+                userId: parseInt(userId),
+                title: 'Mission Message',
+                message: message,
+                type: 'mission_update',
+                relatedId: parseInt(id)
+            }
+        });
+
+        res.json({ message: 'Notification sent successfully' });
+    } catch (error) {
+        console.error('Contact volunteer error:', error);
+        res.status(500).json({ error: 'Failed to send message' });
+    }
+};
+
 const getAllCategories = async (req, res) => {
     try {
         const categories = await prisma.category.findMany({
@@ -486,5 +644,9 @@ module.exports = {
     batchAction,
     inviteToMission,
     contactVolunteers,
-    getTemplates
+    contactVolunteer,
+    getTemplates,
+    addCollaborator,
+    removeCollaborator,
+    getCollaborators
 };

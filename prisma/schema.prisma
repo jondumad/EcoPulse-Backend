@@ -33,6 +33,7 @@ model User {
   notifications        Notification[]
   pointTransactions    PointTransaction[]
   createdMissions      Mission[]           @relation("MissionCreator")
+  collaboratingMissions Mission[]          @relation("MissionCollaborators")
   coordinatorOverrides ManualOverrideLog[] @relation("CoordinatorOverrides")
   userOverrides        ManualOverrideLog[] @relation("UserOverrides")
   feedback             MissionFeedback[]
@@ -61,6 +62,7 @@ model Mission {
   updatedAt              DateTime @updatedAt
 
   creator            User                   @relation("MissionCreator", fields: [createdBy], references: [id])
+  collaborators      User[]                 @relation("MissionCollaborators")
   attendance         Attendance[]
   registrations      Registration[]
   impactMetrics      ImpactMetric[]

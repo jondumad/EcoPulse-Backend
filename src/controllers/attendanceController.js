@@ -30,25 +30,21 @@ const getQRCode = async (req, res) => {
   try {
     const mission = await prisma.mission.findUnique({
       where: { id: parseInt(id) },
+      include: { collaborators: { select: { id: true } } }
     });
 
     if (!mission) {
       return res.status(404).json({ error: 'Mission not found' });
     }
 
-    // Check if the user is the creator or an admin (if we had admin roles)
-    // For now, any Coordinator can probably generate QR if they are associated,
-    // but the requirement says "Coordinator only".
     const userRole = req.user.role?.name || "";
-    const isCoordinator = userRole === 'Coordinator' || req.user.roleId === 2;
     const isSuperAdmin = userRole === 'SuperAdmin' || req.user.roleId === 1;
+    const isCollaborator = mission.collaborators.some(c => c.id === coordinatorId);
+    const isCreator = mission.createdBy === coordinatorId;
 
-    console.log(`[QR Check] User: ${req.user.email}, RoleName: "${userRole}", RoleId: ${req.user.roleId}, isCoord: ${isCoordinator}, isSA: ${isSuperAdmin}`);
-
-    if (!isCoordinator && !isSuperAdmin) {
+    if (!isCreator && !isCollaborator && !isSuperAdmin) {
       return res.status(403).json({
-        error: 'Only coordinators can generate QR codes',
-        debug: { userRole, roleId: req.user.roleId }
+        error: 'Unauthorized: Only mission team can generate QR codes',
       });
     }
 
@@ -142,7 +138,23 @@ const checkIn = async (req, res) => {
         gpsProof: userGps,
         status: 'Pending',
       },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        mission: { select: { id: true, title: true } }
+      }
     });
+
+    // Notify Coordinators via Socket
+    const { getIO } = require('../socket');
+    try {
+        const io = getIO();
+        io.to('coordinator_feed').emit('live_update', {
+            type: 'check_in',
+            data: attendance
+        });
+    } catch (err) {
+        console.error('Socket notification failed:', err);
+    }
 
     // 4. Update Registration Status
     await prisma.registration.update({
@@ -197,7 +209,23 @@ const checkOut = async (req, res) => {
         checkOutTime,
         totalHours: parseFloat(totalHours.toFixed(2)),
       },
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        mission: { select: { id: true, title: true } }
+      }
     });
+
+    // Notify Coordinators via Socket
+    const { getIO } = require('../socket');
+    try {
+        const io = getIO();
+        io.to('coordinator_feed').emit('live_update', {
+            type: 'check_out',
+            data: updatedAttendance
+        });
+    } catch (err) {
+        console.error('Socket notification failed:', err);
+    }
 
     res.json({
       message: 'Checked out successfully',
@@ -280,20 +308,24 @@ const verifyAttendance = async (req, res) => {
   try {
     const attendance = await prisma.attendance.findUnique({
       where: { id: parseInt(id) },
-      include: { mission: true, user: true },
+      include: { mission: { include: { collaborators: { select: { id: true } } } }, user: true },
     });
 
     if (!attendance) {
       return res.status(404).json({ error: 'Attendance record not found' });
     }
 
-    // BLOCK SELF-VERIFICATION
+    // Access Check
     const userRole = req.user.role?.name;
     const isSuperAdmin = userRole === 'SuperAdmin' || req.user.roleId === 1;
+    const isCreator = attendance.mission.createdBy === coordinatorId;
+    const isCollaborator = attendance.mission.collaborators.some(c => c.id === coordinatorId);
 
-    if (!isSuperAdmin && attendance.mission.createdBy === coordinatorId) {
+    // Policy Update: Only team (creator/collab) can verify.
+    // Separation of Duties (old policy) removed in favor of Team Access.
+    if (!isSuperAdmin && !isCreator && !isCollaborator) {
       return res.status(403).json({
-        error: 'Security Policy: You cannot verify attendance for a mission you created.'
+        error: 'Unauthorized: Only mission team can verify attendance.'
       });
     }
 
@@ -394,6 +426,20 @@ const manualCheckIn = async (req, res) => {
     const mId = parseInt(missionId);
     const uId = parseInt(userId);
 
+    // Access Check
+    const mission = await prisma.mission.findUnique({
+      where: { id: mId },
+      include: { collaborators: { select: { id: true } } }
+    });
+    if (!mission) return res.status(404).json({ error: 'Mission not found' });
+
+    const isCollaborator = mission.collaborators.some(c => c.id === coordinatorId);
+    const isAuthorized = req.user.role?.name === 'SuperAdmin' || 
+                         mission.createdBy === coordinatorId || 
+                         isCollaborator;
+
+    if (!isAuthorized) return res.status(403).json({ error: 'Unauthorized' });
+
     // 1. Create/Update Attendance
     await prisma.attendance.upsert({
       where: {
@@ -460,6 +506,20 @@ const manualComplete = async (req, res) => {
     const mId = parseInt(missionId);
     const uId = parseInt(userId);
 
+    // Access Check
+    const mission = await prisma.mission.findUnique({
+      where: { id: mId },
+      include: { collaborators: { select: { id: true } } }
+    });
+    if (!mission) return res.status(404).json({ error: 'Mission not found' });
+
+    const isCollaborator = mission.collaborators.some(c => c.id === coordinatorId);
+    const isAuthorized = req.user.role?.name === 'SuperAdmin' || 
+                         mission.createdBy === coordinatorId || 
+                         isCollaborator;
+
+    if (!isAuthorized) return res.status(403).json({ error: 'Unauthorized' });
+
     // 1. Ensure Attendance exists and is verified
     const attendance = await prisma.attendance.upsert({
       where: {
@@ -489,7 +549,6 @@ const manualComplete = async (req, res) => {
     });
 
     // 2. Award Points (if not already awarded)
-    const mission = await prisma.mission.findUnique({ where: { id: mId } });
     const points = mission.pointsValue;
 
     const registration = await prisma.registration.findUnique({

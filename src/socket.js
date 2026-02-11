@@ -22,18 +22,53 @@ const initSocket = (server) => {
         if (!token) return next(new Error('Authentication error: Token missing'));
 
         try {
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            socket.user = decoded; // { id, role, ... }
+            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret_key');
+            socket.user = {
+                id: decoded.userId,
+                role: decoded.role,
+                roleId: decoded.roleId // Might be missing but handled below
+            };
             next();
         } catch (err) {
             next(new Error('Authentication error: Invalid token'));
         }
     });
 
+    // Helper to check mission team membership
+    const canInteractWithMission = async (userId, missionId) => {
+        try {
+            const mission = await prisma.mission.findUnique({
+                where: { id: parseInt(missionId) },
+                include: { collaborators: { select: { id: true } } }
+            });
+            if (!mission) return false;
+
+            const isCreator = mission.createdBy === userId;
+            const isCollaborator = mission.collaborators.some(c => c.id === userId);
+            
+            // Note: SuperAdmin bypass check could also be added here if role is in decoded token
+            return isCreator || isCollaborator;
+        } catch (err) {
+            console.error('Permission check error:', err);
+            return false;
+        }
+    };
+
     io.on('connection', (socket) => {
         console.log(`User connected: ${socket.user.id} (${socket.id})`);
 
+        // Allow Coordinators to join a special feed
+        if (socket.user.role === 'Coordinator' || socket.user.role === 'SuperAdmin' || socket.user.roleId <= 2) {
+            socket.join('coordinator_feed');
+            console.log(`Coordinator ${socket.user.id} joined coordinator_feed`);
+        }
+
         socket.on('join_mission', async ({ missionId }) => {
+            if (!await canInteractWithMission(socket.user.id, missionId) && socket.user.roleId !== 1) {
+                console.log(`User ${socket.user.id} denied from room mission_${missionId}`);
+                return;
+            }
+
             const roomName = `mission_${missionId}`;
             socket.join(roomName);
 
@@ -45,7 +80,7 @@ const initSocket = (server) => {
             // Get user info from DB for presence
             const user = await prisma.user.findUnique({
                 where: { id: socket.user.id },
-                select: { id: true, name: true, role: true }
+                select: { id: true, name: true, roleId: true }
             });
 
             onlineUsers.get(roomName).add(JSON.stringify(user));
@@ -73,7 +108,12 @@ const initSocket = (server) => {
             }
         });
 
-        socket.on('send_comment', async ({ missionId, content }) => {
+        socket.on('send_comment', async ({ missionId, content }, ack) => {
+            if (!await canInteractWithMission(socket.user.id, missionId) && socket.user.roleId !== 1) {
+                if (ack) ack({ success: false, error: 'Unauthorized' });
+                return;
+            }
+
             console.log(`Socket: send_comment missionId=${missionId} from user=${socket.user.id}`);
             try {
                 const comment = await prisma.missionComment.create({
@@ -88,12 +128,19 @@ const initSocket = (server) => {
                 });
                 console.log(`Socket: Broadcasting new_comment to room mission_${missionId}`);
                 io.to(`mission_${missionId}`).emit('new_comment', comment);
+                if (ack) ack({ success: true, data: comment });
             } catch (err) {
                 console.error('Error saving comment:', err);
+                if (ack) ack({ success: false, error: 'Database error' });
             }
         });
 
-        socket.on('toggle_pin', async ({ missionId, commentId, isPinned }) => {
+        socket.on('toggle_pin', async ({ missionId, commentId, isPinned }, ack) => {
+            if (!await canInteractWithMission(socket.user.id, missionId) && socket.user.roleId !== 1) {
+                if (ack) ack({ success: false, error: 'Unauthorized' });
+                return;
+            }
+
             console.log(`Socket: toggle_pin commentId=${commentId} isPinned=${isPinned}`);
             try {
                 const updatedComment = await prisma.missionComment.update({
@@ -103,12 +150,19 @@ const initSocket = (server) => {
                 });
 
                 io.to(`mission_${missionId}`).emit('comment_updated', updatedComment);
+                if (ack) ack({ success: true });
             } catch (err) {
                 console.error('Error toggling pin:', err);
+                if (ack) ack({ success: false, error: 'Database error' });
             }
         });
 
-        socket.on('add_checklist_item', async ({ missionId, content }) => {
+        socket.on('add_checklist_item', async ({ missionId, content }, ack) => {
+            if (!await canInteractWithMission(socket.user.id, missionId) && socket.user.roleId !== 1) {
+                if (ack) ack({ success: false, error: 'Unauthorized' });
+                return;
+            }
+
             console.log(`Socket: add_checklist_item missionId=${missionId}`);
             try {
                 const item = await prisma.missionChecklistItem.create({
@@ -119,12 +173,19 @@ const initSocket = (server) => {
                 });
                 console.log(`Socket: Broadcasting checklist_item_added to room mission_${missionId}`);
                 io.to(`mission_${missionId}`).emit('checklist_item_added', item);
+                if (ack) ack({ success: true, data: item });
             } catch (err) {
                 console.error('Error adding checklist item:', err);
+                if (ack) ack({ success: false, error: 'Database error' });
             }
         });
 
-        socket.on('toggle_checklist_item', async ({ missionId, itemId, isCompleted }) => {
+        socket.on('toggle_checklist_item', async ({ missionId, itemId, isCompleted }, ack) => {
+            if (!await canInteractWithMission(socket.user.id, missionId) && socket.user.roleId !== 1) {
+                if (ack) ack({ success: false, error: 'Unauthorized' });
+                return;
+            }
+
             console.log(`Socket: toggle_checklist_item itemId=${itemId} isCompleted=${isCompleted}`);
             try {
                 const item = await prisma.missionChecklistItem.update({
@@ -136,8 +197,10 @@ const initSocket = (server) => {
                 });
 
                 io.to(`mission_${missionId}`).emit('checklist_item_updated', item);
+                if (ack) ack({ success: true });
             } catch (err) {
                 console.error('Error toggling checklist item:', err);
+                if (ack) ack({ success: false, error: 'Database error' });
             }
         });
 
