@@ -14,34 +14,34 @@ model Role {
 }
 
 model User {
-  id           Int      @id @default(autoincrement())
-  email        String   @unique
-  passwordHash String
-  name         String
-  roleId       Int
-  totalPoints  Int      @default(0)
-  isActive     Boolean  @default(true)
-  resetToken   String?  @unique
+  id                Int       @id @default(autoincrement())
+  email             String    @unique
+  passwordHash      String
+  name              String
+  roleId            Int
+  totalPoints       Int       @default(0)
+  isActive          Boolean   @default(true)
+  resetToken        String?   @unique
   resetTokenExpires DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  role                 Role                @relation(fields: [roleId], references: [id])
-  attendance           Attendance[]
-  registrations        Registration[]
-  userBadges           UserBadge[]
-  notifications        Notification[]
-  pointTransactions    PointTransaction[]
-  createdMissions      Mission[]           @relation("MissionCreator")
-  collaboratingMissions Mission[]          @relation("MissionCollaborators")
-  coordinatorOverrides ManualOverrideLog[] @relation("CoordinatorOverrides")
-  userOverrides        ManualOverrideLog[] @relation("UserOverrides")
-  feedback             MissionFeedback[]
-  missionComments      MissionComment[]
+  role                  Role                @relation(fields: [roleId], references: [id])
+  attendance            Attendance[]
+  registrations         Registration[]
+  userBadges            UserBadge[]
+  notifications         Notification[]
+  pointTransactions     PointTransaction[]
+  createdMissions       Mission[]           @relation("MissionCreator")
+  collaboratingMissions Mission[]           @relation("MissionCollaborators")
+  coordinatorOverrides  ManualOverrideLog[] @relation("CoordinatorOverrides")
+  userOverrides         ManualOverrideLog[] @relation("UserOverrides")
+  feedback              MissionFeedback[]
+  missionComments       MissionComment[]
 }
 
 model Mission {
-  id                     Int      @id @default(autoincrement())
+  id                     Int       @id @default(autoincrement())
   title                  String
   description            String
   locationGps            String // Store as "lat,lng"
@@ -50,16 +50,18 @@ model Mission {
   endTime                DateTime
   pointsValue            Int
   maxVolunteers          Int?
-  currentVolunteers      Int      @default(0)
+  currentVolunteers      Int       @default(0)
   createdBy              Int
-  priority               String   @default("Normal") // "Normal", "Urgent", "Emergency"
+  priority               String    @default("Normal") // "Normal", "Urgent", "Emergency"
   emergencyJustification String?
-  isTemplate             Boolean  @default(false)
-  isEmergency            Boolean  @default(false)
-  autoPromote            Boolean  @default(true) // Auto-promote from waitlist when slots open
-  status                 String   @default("Open") // "Open", "InProgress", "Completed", "Cancelled"
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  isTemplate             Boolean   @default(false)
+  isEmergency            Boolean   @default(false)
+  autoPromote            Boolean   @default(true) // Auto-promote from waitlist when slots open
+  status                 String    @default("Open") // "Open", "InProgress", "Completed", "Cancelled"
+  actualStartTime        DateTime?
+  actualEndTime          DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   creator            User                   @relation("MissionCreator", fields: [createdBy], references: [id])
   collaborators      User[]                 @relation("MissionCollaborators")

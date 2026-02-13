@@ -93,13 +93,6 @@ const checkIn = async (req, res) => {
     const now = new Date();
     const startTime = new Date(mission.startTime);
     const endTime = new Date(mission.endTime);
-    const thirtyMinutesBefore = new Date(startTime.getTime() - 30 * 60000);
-
-    if (now < thirtyMinutesBefore) {
-      return res.status(400).json({
-        error: `Check-in allows only 30 mins before start. Please wait until ${thirtyMinutesBefore.toLocaleTimeString()}`
-      });
-    }
 
     if (now > endTime) {
       return res.status(400).json({ error: 'This mission has already ended.' });
@@ -147,13 +140,24 @@ const checkIn = async (req, res) => {
     // Notify Coordinators via Socket
     const { getIO } = require('../socket');
     try {
-        const io = getIO();
-        io.to('coordinator_feed').emit('live_update', {
-            type: 'check_in',
-            data: attendance
+      const io = getIO();
+      io.to('coordinator_feed').emit('live_update', {
+        type: 'check_in',
+        data: attendance
+      });
+
+      // NEW: Check for Early Start Opportunity
+      if (mission.status === 'Open' && now < startTime) {
+        io.to('mission_' + missionId).emit('early_checkin_alert', {
+          missionId: mission.id,
+          missionTitle: mission.title,
+          volunteerName: attendance.user.name,
+          checkInTime: attendance.checkInTime,
+          startTime: mission.startTime
         });
+      }
     } catch (err) {
-        console.error('Socket notification failed:', err);
+      console.error('Socket notification failed:', err);
     }
 
     // 4. Update Registration Status
@@ -170,6 +174,7 @@ const checkIn = async (req, res) => {
     res.status(201).json({
       message: 'Checked in successfully',
       attendance,
+      isEarly: mission.status === 'Open' && now < startTime
     });
   } catch (error) {
     console.error('Check-in error:', error);
@@ -218,13 +223,13 @@ const checkOut = async (req, res) => {
     // Notify Coordinators via Socket
     const { getIO } = require('../socket');
     try {
-        const io = getIO();
-        io.to('coordinator_feed').emit('live_update', {
-            type: 'check_out',
-            data: updatedAttendance
-        });
+      const io = getIO();
+      io.to('coordinator_feed').emit('live_update', {
+        type: 'check_out',
+        data: updatedAttendance
+      });
     } catch (err) {
-        console.error('Socket notification failed:', err);
+      console.error('Socket notification failed:', err);
     }
 
     res.json({
@@ -434,9 +439,9 @@ const manualCheckIn = async (req, res) => {
     if (!mission) return res.status(404).json({ error: 'Mission not found' });
 
     const isCollaborator = mission.collaborators.some(c => c.id === coordinatorId);
-    const isAuthorized = req.user.role?.name === 'SuperAdmin' || 
-                         mission.createdBy === coordinatorId || 
-                         isCollaborator;
+    const isAuthorized = req.user.role?.name === 'SuperAdmin' ||
+      mission.createdBy === coordinatorId ||
+      isCollaborator;
 
     if (!isAuthorized) return res.status(403).json({ error: 'Unauthorized' });
 
@@ -514,9 +519,9 @@ const manualComplete = async (req, res) => {
     if (!mission) return res.status(404).json({ error: 'Mission not found' });
 
     const isCollaborator = mission.collaborators.some(c => c.id === coordinatorId);
-    const isAuthorized = req.user.role?.name === 'SuperAdmin' || 
-                         mission.createdBy === coordinatorId || 
-                         isCollaborator;
+    const isAuthorized = req.user.role?.name === 'SuperAdmin' ||
+      mission.createdBy === coordinatorId ||
+      isCollaborator;
 
     if (!isAuthorized) return res.status(403).json({ error: 'Unauthorized' });
 

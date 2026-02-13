@@ -291,7 +291,7 @@ const updateMission = async (req, res) => {
     delete updateData.categoryIds;
 
     try {
-        const existing = await prisma.mission.findUnique({ 
+        const existing = await prisma.mission.findUnique({
             where: { id: parseInt(id) },
             include: { collaborators: { select: { id: true } } }
         });
@@ -317,6 +317,14 @@ const updateMission = async (req, res) => {
             };
         }
 
+        // Capture actual timing when status changes
+        if (updateData.status === 'InProgress' && !existing.actualStartTime) {
+            updateData.actualStartTime = new Date();
+        }
+        if ((updateData.status === 'Completed' || updateData.status === 'Cancelled') && !existing.actualEndTime) {
+            updateData.actualEndTime = new Date();
+        }
+
         const mission = await prisma.mission.update({
             where: { id: parseInt(id) },
             data: updateData,
@@ -326,7 +334,7 @@ const updateMission = async (req, res) => {
         });
 
         // Trigger notification if status changed to InProgress (Mission Starting)
-        if (updateData.status === 'InProgress') {
+        if (updateData.status === 'InProgress' && existing.status !== 'InProgress') {
             await notifyVolunteersMissionStarted(mission);
         }
 
@@ -457,7 +465,10 @@ const deleteMission = async (req, res) => {
         // Logic: Instead of hard delete, set status to Cancelled
         const mission = await prisma.mission.update({
             where: { id: parseInt(id) },
-            data: { status: 'Cancelled' }
+            data: {
+                status: 'Cancelled',
+                actualEndTime: new Date()
+            }
         });
         res.json({ message: 'Mission cancelled successfully', mission });
     } catch (error) {
